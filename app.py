@@ -116,4 +116,4 @@ if tpl_file and src_files:
                 file_name="resultaat.docx"
             )
 else:
-    st.info("Upload een template en minimaal één brondocument in de zijbalk om te starte
+    st.info("Upload een template en minimaal één brondocument in de zijbalk om te starten.")
