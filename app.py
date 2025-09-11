@@ -1,27 +1,4 @@
 from dotenv import load_dotenv
-load_dotenv() # moet vóór al je os.getenv-calls staan
-
-
-import os
-tempfile
-from docxtpl import DocxTemplate
-import pandas as pd
-import streamlit as st
-from groq import Groq
-
-
-# ─── Init Groq-client ─────────────────────────────────────────────────
-def get_groq_client():
-api_key = os.getenv("GROQ_API_KEY", "").strip()
-project_id = os.getenv("GROQ_PROJECT_ID", "").strip()
-dataset = os.getenv("GROQ_DATASET", "").strip()
-
-
-if not api_key:
-st.warning("⚠️ Geen GROQ_API_KEY gevonden. Functies met Groq falen.")
-return None
-if not all([project_id, dataset]):
-st.error("❌ Stel ook GROQ_PROJECT_ID en GROQ_DATASET in in je .env.")
 st.stop()
 
 
@@ -110,4 +87,22 @@ st.write(extract_table_headers(tpl_path))
 
 
 data = extract_data_from_sources(src_paths)
+df = pd.DataFrame(fill_missing_measures(data))
+
+
+st.markdown("### Stap 3: Controleer en bewerk")
+edited = st.experimental_data_editor(df, num_rows="dynamic")
+
+
+st.markdown("### Stap 4: Genereer DOCX")
+if st.button("Genereer document"):
+out = os.path.join(tmp_dir, "resultaat.docx")
+generate_docx(tpl_path, edited, out)
+with open(out, "rb") as f:
+st.download_button(
+"Download .docx",
+f,
+file_name="resultaat.docx"
+)
+else:
 st.info("Upload eerst een template en minimaal één brondocument via de zijbalk.")
