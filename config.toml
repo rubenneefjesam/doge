@@ -1,0 +1,7 @@
+[theme]
+base = "light"                  # of "dark"
+primaryColor = "#7C3AED"        # paars-accent
+backgroundColor = "#F8FAFC"     # pagina-achtergrond
+secondaryBackgroundColor = "#EEF2FF" # “kaartjes”/containers
+textColor = "#0F172A"           # tekstkleur
+font = "sans serif"
