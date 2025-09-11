@@ -5,7 +5,7 @@ import tempfile
 from docxtpl import DocxTemplate
 import pandas as pd
 import streamlit as st
-from groq import Groq
+import groq  # let op: we import het module, niet de class Groq
 
 # ─── Streamlit Page Config ───────────────────────────────────────────────
 st.set_page_config(page_title="DOCX Generator", layout="wide")
@@ -29,8 +29,13 @@ def get_groq_client():
         st.stop()
 
     try:
-        client = Groq(api_key=api_key, project_id=project_id, dataset=dataset)
-        # (optioneel) korte validatie-call
+        # Hier gebruiken we de juiste constructor:
+        client = groq.Client(
+            project_id=project_id,
+            dataset=dataset,
+            api_key=api_key
+        )
+        # (optioneel) korte validatie-call:
         client.models.list()
         st.sidebar.success("🔑 Verbonden met Groq API")
         return client
@@ -79,17 +84,17 @@ template_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
 source_files  = st.sidebar.file_uploader("Upload Brondocumenten", type=["docx"], accept_multiple_files=True)
 
 if template_file and source_files:
-    tmp_dir   = tempfile.mkdtemp()
-    tpl_path  = os.path.join(tmp_dir, "template.docx")
+    tmp_dir  = tempfile.mkdtemp()
+    tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
         f.write(template_file.getbuffer())
 
     paths = []
     for sf in source_files:
-        path = os.path.join(tmp_dir, sf.name)
-        with open(path, "wb") as out:
+        p = os.path.join(tmp_dir, sf.name)
+        with open(p, "wb") as out:
             out.write(sf.getbuffer())
-        paths.append(path)
+        paths.append(p)
 
     # Stap 2: Toon kolommen uit template
     st.subheader("Stap 2: Gevonden kolommen")
