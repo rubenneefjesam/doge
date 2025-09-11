@@ -1,3 +1,7 @@
+from dotenv import load_dotenv, find_dotenv
+# zoekt automatisch een .env in cwd (of bovenliggende mappen)
+load_dotenv(find_dotenv())
+
 import os
 import tempfile
 from docxtpl import DocxTemplate
