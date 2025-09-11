@@ -1,5 +1,3 @@
-from dotenv import load_dotenv
-load_dotenv()
 import os
 import tempfile
 from docxtpl import DocxTemplate
@@ -9,15 +7,16 @@ from groq import Groq
 
 # ─── Init Groq-client ─────────────────────────────────────────────────
 def get_groq_client():
+    # Haal credentials uit omgevingsvariabelen
     api_key    = os.getenv("GROQ_API_KEY", "").strip()
     project_id = os.getenv("GROQ_PROJECT_ID", "").strip()
     dataset    = os.getenv("GROQ_DATASET", "").strip()
 
     if not api_key:
-        st.warning("⚠️ Geen GROQ_API_KEY gevonden. Zet deze eerst in je terminal: export GROQ_API_KEY=…")
+        st.warning("⚠️ Geen GROQ_API_KEY gevonden. Voer eerst in je terminal in:\nexport GROQ_API_KEY=je_key")
         return None
-    if not all([project_id, dataset]):
-        st.error("❌ Stel ook GROQ_PROJECT_ID en GROQ_DATASET in als env-vars.")
+    if not project_id or not dataset:
+        st.error("❌ Stel ook GROQ_PROJECT_ID en GROQ_DATASET in:\nexport GROQ_PROJECT_ID=... && export GROQ_DATASET=...")
         st.stop()
 
     try:
@@ -29,86 +28,88 @@ def get_groq_client():
         st.sidebar.error(f"❌ Ongeldige Groq-credentials: {e}")
         st.stop()
 
-# maak de client direct beschikbaar
+# Initialiseer client
 groq_client = get_groq_client()
 
-# ─── GROQ-fetching ────────────────────────────────────────────────────
-def fetch_measures_from_groq():
+# ─── Fetch-functie ─────────────────────────────────────────────────────
+def fetch_measures():
     if not groq_client:
         return []
     query = '*[_type == "beheersmaatregel"][].tekst'
     return groq_client.fetch(query) or []
 
-# ─── Extractie- & render-functies ────────────────────────────────────
-def extract_table_headers(template_path):
+# ─── Document-extractie
+def extract_headers(template_path):
     doc = DocxTemplate(template_path)
     return [cell.text.strip() for cell in doc.docx.tables[0].rows[0].cells]
 
-def extract_data_from_sources(source_paths):
-    data = []
-    for path in source_paths:
-        fn = os.path.basename(path)
-        data.append({
-            "Risico": f"Risico uit {fn}",
-            "Oorzaak": f"Oorzaak uit {fn}",
+def extract_data(paths):
+    items = []
+    for p in paths:
+        name = os.path.basename(p)
+        items.append({
+            "Risico": f"Risico uit {name}",
+            "Oorzaak": f"Oorzaak uit {name}",
             "Beheersmaatregel": None
         })
-    return data
+    return items
 
-def fill_missing_measures(data):
-    measures = fetch_measures_from_groq()
+# ─── Vul maatregelen aan
+def fill_measures(items):
+    measures = fetch_measures()
     if not measures:
         measures = ["Geen voorstel beschikbaar"]
-    for idx, item in enumerate(data):
-        if not item["Beheersmaatregel"]:
-            item["Beheersmaatregel"] = measures[idx % len(measures)]
-    return data
+    for i, it in enumerate(items):
+        if not it["Beheersmaatregel"]:
+            it["Beheersmaatregel"] = measures[i % len(measures)]
+    return items
 
-def generate_docx(template_path, df, output_path):
-    context = {"risks": df.to_dict(orient="records")}
+# ─── Genereer DOCX
+def create_docx(template_path, df, out_path):
+    ctx = {"risks": df.to_dict(orient="records")}
     doc = DocxTemplate(template_path)
-    doc.render(context)
-    doc.save(output_path)
+    doc.render(ctx)
+    doc.save(out_path)
 
-# ─── Streamlit UI ────────────────────────────────────────────────────
+# ─── Streamlit UI
 st.set_page_config(page_title="DOCX Generator", layout="wide")
 st.title("📄 DOCX Generator met Templates")
 
 st.sidebar.header("Stap 1: Upload bestanden")
-template_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
-sources       = st.sidebar.file_uploader("Upload Brondocumenten", type=["docx"], accept_multiple_files=True)
+tpl = st.sidebar.file_uploader("Upload DOCX Template", type="docx")
+srcs = st.sidebar.file_uploader("Upload brondocs", type="docx", accept_multiple_files=True)
 
-if template_file and sources:
-    tmp_dir = tempfile.mkdtemp()
-    tpl_path = os.path.join(tmp_dir, "template.docx")
+if tpl and srcs:
+    tmpd = tempfile.mkdtemp()
+    tpl_path = os.path.join(tmpd, "template.docx")
     with open(tpl_path, "wb") as f:
-        f.write(template_file.getbuffer())
+        f.write(tpl.getbuffer())
 
-    src_paths = []
-    for f in sources:
-        p = os.path.join(tmp_dir, f.name)
+    paths = []
+    for fobj in srcs:
+        p = os.path.join(tmpd, fobj.name)
         with open(p, "wb") as out:
-            out.write(f.getbuffer())
-        src_paths.append(p)
+            out.write(fobj.getbuffer())
+        paths.append(p)
 
-    st.markdown("### Stap 2: Gevonden kolommen")
-    st.write(extract_table_headers(tpl_path))
+    st.markdown("### Stap 2: Kolommen uit template")
+    st.write(extract_headers(tpl_path))
 
-    data = extract_data_from_sources(src_paths)
-    df = pd.DataFrame(fill_missing_measures(data))
+    data = extract_data(paths)
+    df = pd.DataFrame(fill_measures(data))
 
     st.markdown("### Stap 3: Controleer en bewerk")
     edited = st.experimental_data_editor(df, num_rows="dynamic")
 
     st.markdown("### Stap 4: Genereer DOCX")
     if st.button("Genereer document"):
-        out = os.path.join(tmp_dir, "resultaat.docx")
-        generate_docx(tpl_path, edited, out)
-        with open(out, "rb") as f:
+        out = os.path.join(tmpd, "resultaat.docx")
+        create_docx(tpl_path, edited, out)
+        with open(out, "rb") as file:
             st.download_button(
-                "Download .docx",
-                f,
+                label="Download .docx",
+                data=file,
                 file_name="resultaat.docx"
             )
 else:
-    st.info("Upload eerst een template en minimaal één brondocument via de zijbalk.")
+    st.info("Upload eerst een template en minimaal één brondocument.")
