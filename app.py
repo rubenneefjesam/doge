@@ -1,8 +1,5 @@
-from dotenv import load_dotenv
-load_dotenv()  # moet vóór al je os.getenv-calls staan
-
 import os
-tempfile
+import tempfile
 from docxtpl import DocxTemplate
 import pandas as pd
 import streamlit as st
@@ -15,15 +12,14 @@ def get_groq_client():
     dataset    = os.getenv("GROQ_DATASET", "").strip()
 
     if not api_key:
-        st.warning("⚠️ Geen GROQ_API_KEY gevonden. Functies met Groq falen.")
+        st.warning("⚠️ Geen GROQ_API_KEY gevonden. Zet deze eerst in je terminal: export GROQ_API_KEY=…")
         return None
     if not all([project_id, dataset]):
-        st.error("❌ Stel ook GROQ_PROJECT_ID en GROQ_DATASET in in je .env.")
+        st.error("❌ Stel ook GROQ_PROJECT_ID en GROQ_DATASET in als env-vars.")
         st.stop()
 
     try:
         client = Groq(api_key=api_key, project_id=project_id, dataset=dataset)
-        # korte validatie
         _ = client.models.list()
         st.sidebar.success("🔑 Groq API key werkt!")
         return client
