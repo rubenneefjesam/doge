@@ -2,3 +2,4 @@ streamlit
 plotly
 groq
 docxtpl>=0.17.0
+python-dotenv
