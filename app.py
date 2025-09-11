@@ -5,45 +5,50 @@ import pandas as pd
 import streamlit as st
 from groq import Groq
 
-# ─── Init Groq-client ─────────────────────────────────────────────────
-def get_groq_client():
-    # Haal credentials uit omgevingsvariabelen
-    api_key    = os.getenv("GROQ_API_KEY", "").strip()
-    project_id = os.getenv("GROQ_PROJECT_ID", "").strip()
-    dataset    = os.getenv("GROQ_DATASET", "").strip()
+# ─── Streamlit Page Config ─────────────────────────────────────────────────
+st.set_page_config(page_title="DOCX Generator", layout="wide")
+st.title("📄 DOCX Generator met Templates")
 
-    if not api_key:
-        st.warning("⚠️ Geen GROQ_API_KEY gevonden. Voer eerst in je terminal in:\nexport GROQ_API_KEY=je_key")
+# ─── Sidebar: API-configuratie ─────────────────────────────────────────────────
+st.sidebar.header("🔧 API Configuratie")
+# Laat gebruiker sleutel, project en dataset invullen
+api_key = st.sidebar.text_input("Groq API Key", type="password")
+project_id = st.sidebar.text_input("Groq Project ID")
+dataset = st.sidebar.text_input("Groq Dataset")
+
+# ─── Init Groq-client ──────────────────────────────────────────────────────────
+def get_groq_client(key: str, proj: str, ds: str):
+    if not (key and proj and ds):
+        st.sidebar.warning("Vul API Key, Project ID en Dataset in om te verbinden.")
         return None
-    if not project_id or not dataset:
-        st.error("❌ Stel ook GROQ_PROJECT_ID en GROQ_DATASET in:\nexport GROQ_PROJECT_ID=... && export GROQ_DATASET=...")
-        st.stop()
-
     try:
-        client = Groq(api_key=api_key, project_id=project_id, dataset=dataset)
-        _ = client.models.list()
-        st.sidebar.success("🔑 Groq API key werkt!")
+        client = Groq(api_key=key, project_id=proj, dataset=ds)
+        client.models.list()  # korte validatie
+        st.sidebar.success("🔑 Verbonden met Groq")
         return client
     except Exception as e:
-        st.sidebar.error(f"❌ Ongeldige Groq-credentials: {e}")
-        st.stop()
+        st.sidebar.error(f"❌ Fout bij Groq-verbinding: {e}")
+        return None
 
-# Initialiseer client
-groq_client = get_groq_client()
+# Haal client op
+groq_client = get_groq_client(api_key, project_id, dataset)
 
-# ─── Fetch-functie ─────────────────────────────────────────────────────
+# ─── Fetch-functie ──────────────────────────────────────────────────────────
 def fetch_measures():
     if not groq_client:
         return []
     query = '*[_type == "beheersmaatregel"][].tekst'
-    return groq_client.fetch(query) or []
+    try:
+        return groq_client.fetch(query) or []
+    except Exception:
+        return []
 
-# ─── Document-extractie
-def extract_headers(template_path):
+# ─── Document-extractie en transformatie ─────────────────────────────────────
+def extract_headers(template_path: str) -> list[str]:
     doc = DocxTemplate(template_path)
     return [cell.text.strip() for cell in doc.docx.tables[0].rows[0].cells]
 
-def extract_data(paths):
+def extract_data(paths: list[str]) -> list[dict]:
     items = []
     for p in paths:
         name = os.path.basename(p)
@@ -54,54 +59,53 @@ def extract_data(paths):
         })
     return items
 
-# ─── Vul maatregelen aan
-def fill_measures(items):
+def fill_measures(items: list[dict]) -> list[dict]:
     measures = fetch_measures()
     if not measures:
         measures = ["Geen voorstel beschikbaar"]
     for i, it in enumerate(items):
-        if not it["Beheersmaatregel"]:
+        if it.get("Beheersmaatregel") is None:
             it["Beheersmaatregel"] = measures[i % len(measures)]
     return items
 
-# ─── Genereer DOCX
-def create_docx(template_path, df, out_path):
-    ctx = {"risks": df.to_dict(orient="records")}
+def create_docx(template_path: str, df: pd.DataFrame, out_path: str) -> None:
+    context = {"risks": df.to_dict(orient="records")}
     doc = DocxTemplate(template_path)
-    doc.render(ctx)
+    doc.render(context)
     doc.save(out_path)
 
-# ─── Streamlit UI
-st.set_page_config(page_title="DOCX Generator", layout="wide")
-st.title("📄 DOCX Generator met Templates")
-
+# ─── Stap 1: Upload template en brondocumenten ─────────────────────────────────
 st.sidebar.header("Stap 1: Upload bestanden")
-tpl = st.sidebar.file_uploader("Upload DOCX Template", type="docx")
-srcs = st.sidebar.file_uploader("Upload brondocs", type="docx", accept_multiple_files=True)
+tpl_file = st.sidebar.file_uploader("DOCX Template", type="docx")
+src_files = st.sidebar.file_uploader("Brondocumenten", type="docx", accept_multiple_files=True)
 
-if tpl and srcs:
+if tpl_file and src_files:
     tmpd = tempfile.mkdtemp()
     tpl_path = os.path.join(tmpd, "template.docx")
     with open(tpl_path, "wb") as f:
-        f.write(tpl.getbuffer())
+        f.write(tpl_file.getbuffer())
 
     paths = []
-    for fobj in srcs:
-        p = os.path.join(tmpd, fobj.name)
+    for sf in src_files:
+        p = os.path.join(tmpd, sf.name)
         with open(p, "wb") as out:
-            out.write(fobj.getbuffer())
+            out.write(sf.getbuffer())
         paths.append(p)
 
-    st.markdown("### Stap 2: Kolommen uit template")
+    # ─── Stap 2: Toon kolommen uit template
+    st.subheader("Stap 2: Gevonden kolommen")
     st.write(extract_headers(tpl_path))
 
+    # ─── Stap 3: Data extraheren en aanvullen
     data = extract_data(paths)
     df = pd.DataFrame(fill_measures(data))
 
-    st.markdown("### Stap 3: Controleer en bewerk")
+    # ─── Stap 4: Controleer en bewerk
+    st.subheader("Stap 3: Controleer en bewerk")
     edited = st.experimental_data_editor(df, num_rows="dynamic")
 
-    st.markdown("### Stap 4: Genereer DOCX")
+    # ─── Stap 5: Genereer DOCX
+    st.subheader("Stap 4: Genereer document")
     if st.button("Genereer document"):
         out = os.path.join(tmpd, "resultaat.docx")
         create_docx(tpl_path, edited, out)
@@ -112,4 +116,4 @@ if tpl and srcs:
                 file_name="resultaat.docx"
             )
 else:
-    st.info("Upload eerst een template en minimaal één brondocument.")
+    st.info("Upload een template en minimaal één brondocument in de zijbalk om te starte
