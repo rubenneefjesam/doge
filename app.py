@@ -1,10 +1,8 @@
-# app.py
-
 from dotenv import load_dotenv
 load_dotenv()  # moet vóór al je os.getenv-calls staan
 
 import os
-import tempfile
+tempfile
 from docxtpl import DocxTemplate
 import pandas as pd
 import streamlit as st
@@ -25,7 +23,6 @@ def get_groq_client():
 
     try:
         client = Groq(api_key=api_key, project_id=project_id, dataset=dataset)
-        # korte validatie
         _ = client.models.list()
         st.sidebar.success("🔑 Groq API key werkt!")
         return client
@@ -36,13 +33,10 @@ def get_groq_client():
 # maak de client direct beschikbaar
 client = get_groq_client()
 
-
 # ─── GROQ-fetching ────────────────────────────────────────────────────
 def fetch_measures_from_groq():
-    # client is al gevalideerd in get_groq_client
     query = '*[_type == "beheersmaatregel"][].tekst'
     return client.fetch(query) or []
-
 
 # ─── Extractie- & render-functies ────────────────────────────────────
 def extract_table_headers(template_path):
@@ -74,7 +68,6 @@ def generate_docx(template_path, df, output_path):
     doc = DocxTemplate(template_path)
     doc.render(context)
     doc.save(output_path)
-
 
 # ─── Streamlit UI ────────────────────────────────────────────────────
 st.set_page_config(page_title="DOCX Generator", layout="wide")
@@ -111,4 +104,10 @@ if template_file and sources:
         out = os.path.join(tmp_dir, "resultaat.docx")
         generate_docx(tpl_path, edited, out)
         with open(out, "rb") as f:
-            st.download_button("Download .docx", f, file_name=
+            st.download_button(
+                "Download .docx",
+                f,
+                file_name="resultaat.docx"
+            )
+else:
+    st.info("Upload eerst een template en minimaal één brondocumen
