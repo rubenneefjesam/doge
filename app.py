@@ -5,67 +5,64 @@ import pandas as pd
 import streamlit as st
 from groq import Groq
 
-# ─── Streamlit Page Config ─────────────────────────────────────────────────
+# ─── Load .env if present (optional) ───────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# ─── Streamlit Page Config ───────────────────────────────────────────────
 st.set_page_config(page_title="DOCX Generator", layout="wide")
 st.title("📄 DOCX Generator met Templates")
 
-# ─── Sidebar: API-configuratie ─────────────────────────────────────────────────
-st.sidebar.header("🔧 API Configuratie")
-# Laat gebruiker sleutel, project en dataset invullen
-api_key = st.sidebar.text_input("Groq API Key", type="password")
-project_id = st.sidebar.text_input("Groq Project ID")
-dataset = st.sidebar.text_input("Groq Dataset")
+# ─── Groq API-client initialisatie via omgevingsvariabelen ────────────────
+def get_groq_client():
+    api_key    = os.getenv("GROQ_API_KEY", "").strip()
+    project_id = os.getenv("GROQ_PROJECT_ID", "").strip()
+    dataset    = os.getenv("GROQ_DATASET", "").strip()
 
-# ─── Init Groq-client ──────────────────────────────────────────────────────────
-def get_groq_client(key: str, proj: str, ds: str):
-    if not (key and proj and ds):
-        st.sidebar.warning("Vul API Key, Project ID en Dataset in om te verbinden.")
-        return None
+    if not api_key:
+        st.sidebar.error("⚠️ GROQ_API_KEY niet gevonden in omgevingsvariabelen.")
+        st.stop()
+    if not project_id or not dataset:
+        st.sidebar.error("⚠️ GROQ_PROJECT_ID of GROQ_DATASET niet ingesteld in omgevingsvariabelen.")
+        st.stop()
+
     try:
-        client = Groq(api_key=key, project_id=proj, dataset=ds)
-        client.models.list()  # korte validatie
-        st.sidebar.success("🔑 Verbonden met Groq")
+        client = Groq(api_key=api_key, project_id=project_id, dataset=dataset)
+        _ = client.models.list()
+        st.sidebar.success("🔑 Verbonden met Groq API")
         return client
     except Exception as e:
-        st.sidebar.error(f"❌ Fout bij Groq-verbinding: {e}")
-        return None
+        st.sidebar.error(f"❌ Fout bij verbinden met Groq API: {e}")
+        st.stop()
 
-# Haal client op
-groq_client = get_groq_client(api_key, project_id, dataset)
+# Initialise client
+groq_client = get_groq_client()
 
-# ─── Fetch-functie ──────────────────────────────────────────────────────────
+# ─── Functie om maatregelen op te halen ────────────────────────────────────
 def fetch_measures():
-    if not groq_client:
-        return []
     query = '*[_type == "beheersmaatregel"][].tekst'
-    try:
-        return groq_client.fetch(query) or []
-    except Exception:
-        return []
+    return groq_client.fetch(query) or []
 
-# ─── Document-extractie en transformatie ─────────────────────────────────────
+# ─── Functies voor documentverwerking ─────────────────────────────────────
 def extract_headers(template_path: str) -> list[str]:
     doc = DocxTemplate(template_path)
     return [cell.text.strip() for cell in doc.docx.tables[0].rows[0].cells]
 
 def extract_data(paths: list[str]) -> list[dict]:
-    items = []
-    for p in paths:
-        name = os.path.basename(p)
-        items.append({
-            "Risico": f"Risico uit {name}",
-            "Oorzaak": f"Oorzaak uit {name}",
-            "Beheersmaatregel": None
-        })
-    return items
+    return [{
+        "Risico": f"Risico uit {os.path.basename(p)}",
+        "Oorzaak": f"Oorzaak uit {os.path.basename(p)}",
+        "Beheersmaatregel": None
+    } for p in paths]
 
 def fill_measures(items: list[dict]) -> list[dict]:
-    measures = fetch_measures()
-    if not measures:
-        measures = ["Geen voorstel beschikbaar"]
-    for i, it in enumerate(items):
-        if it.get("Beheersmaatregel") is None:
-            it["Beheersmaatregel"] = measures[i % len(measures)]
+    measures = fetch_measures() or ["Geen voorstel beschikbaar"]
+    for i, item in enumerate(items):
+        if not item["Beheersmaatregel"]:
+            item["Beheersmaatregel"] = measures[i % len(measures)]
     return items
 
 def create_docx(template_path: str, df: pd.DataFrame, out_path: str) -> None:
@@ -74,46 +71,42 @@ def create_docx(template_path: str, df: pd.DataFrame, out_path: str) -> None:
     doc.render(context)
     doc.save(out_path)
 
-# ─── Stap 1: Upload template en brondocumenten ─────────────────────────────────
+# ─── Streamlit UI-workflow ────────────────────────────────────────────────
 st.sidebar.header("Stap 1: Upload bestanden")
-tpl_file = st.sidebar.file_uploader("DOCX Template", type="docx")
-src_files = st.sidebar.file_uploader("Brondocumenten", type="docx", accept_multiple_files=True)
+template_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
+sources = st.sidebar.file_uploader("Upload brondocumenten", type=["docx"], accept_multiple_files=True)
 
-if tpl_file and src_files:
-    tmpd = tempfile.mkdtemp()
-    tpl_path = os.path.join(tmpd, "template.docx")
+if template_file and sources:
+    tmp_dir = tempfile.mkdtemp()
+    tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
-        f.write(tpl_file.getbuffer())
+        f.write(template_file.getbuffer())
 
-    paths = []
-    for sf in src_files:
-        p = os.path.join(tmpd, sf.name)
+    src_paths = []
+    for f in sources:
+        p = os.path.join(tmp_dir, f.name)
         with open(p, "wb") as out:
-            out.write(sf.getbuffer())
-        paths.append(p)
+            out.write(f.getbuffer())
+        src_paths.append(p)
 
-    # ─── Stap 2: Toon kolommen uit template
-    st.subheader("Stap 2: Gevonden kolommen")
+    st.subheader("Stap 2: Kolommen uit template")
     st.write(extract_headers(tpl_path))
 
-    # ─── Stap 3: Data extraheren en aanvullen
-    data = extract_data(paths)
+    data = extract_data(src_paths)
     df = pd.DataFrame(fill_measures(data))
 
-    # ─── Stap 4: Controleer en bewerk
     st.subheader("Stap 3: Controleer en bewerk")
     edited = st.experimental_data_editor(df, num_rows="dynamic")
 
-    # ─── Stap 5: Genereer DOCX
-    st.subheader("Stap 4: Genereer document")
+    st.subheader("Stap 4: Genereer DOCX")
     if st.button("Genereer document"):
-        out = os.path.join(tmpd, "resultaat.docx")
-        create_docx(tpl_path, edited, out)
-        with open(out, "rb") as file:
+        out_file = os.path.join(tmp_dir, "resultaat.docx")
+        create_docx(tpl_path, edited, out_file)
+        with open(out_file, "rb") as file:
             st.download_button(
                 label="Download .docx",
                 data=file,
                 file_name="resultaat.docx"
             )
 else:
-    st.info("Upload een template en minimaal één brondocument in de zijbalk om te starten.")
+    st.info("Upload een template en minimaal één brondocument om te starten.")
