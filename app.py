@@ -14,9 +14,8 @@ def get_groq_client():
     api_key = st.secrets.get("groq", {}).get("api_key", "").strip()
     if not api_key:
         st.sidebar.error(
-            "❌ Mist Groq-credentials! Voeg ze toe in `.streamlit/secrets.toml`:
-[groq]
-api_key = \"...\"")
+            "❌ Mist Groq-credentials! Voeg ze toe in `.streamlit/secrets.toml` met een [groq]-sectie."
+        )
         st.stop()
     try:
         client = Groq(api_key=api_key)
@@ -37,19 +36,18 @@ def read_docx(path: str) -> str:
 # ─── Vul template via LLM ─────────────────────────────────────────────────
 def enrich_and_fill(template_path: str, source_paths: list[str]) -> bytes:
     # Lees template placeholder-namen
-    tpl = DocxTemplate(template_path)
+tpl = DocxTemplate(template_path)
     fields = [cell.text.strip() for cell in tpl.docx.tables[0].rows[0].cells]
     # Bouw prompt
     parts = [f"Template fields: {', '.join(fields)}."]
     for src in source_paths:
         text = read_docx(src)
         parts.append(f"Brondocument ({os.path.basename(src)}):\n{text}")
-    prompt = (
-        "Vul het template in met de volgende brondocumenten. Geef per rij een entry voor: "
-        + ", ".join(fields)
-        + ". Output in JSON array formaat."
+    prompt_intro = (
+        "Vul het template in met de volgende brondocumenten."
+        f" Geef per rij een entry voor: {', '.join(fields)}. Output in JSON array formaat."
     )
-    full_prompt = prompt + "\n\n" + "\n\n".join(parts)
+    full_prompt = prompt_intro + "\n\n" + "\n\n".join(parts)
 
     # Chat-call naar LLM
     response = groq_client.chat.completions.create(
@@ -65,7 +63,7 @@ def enrich_and_fill(template_path: str, source_paths: list[str]) -> bytes:
     import json
     records = json.loads(content)
     # Render en sla op
-    tpl.render({"risks": records})
+tpl.render({"risks": records})
     out = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
     tpl.save(out.name)
     out.seek(0)
