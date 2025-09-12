@@ -20,12 +20,12 @@ def get_groq_client():
     try:
         return Groq(api_key=api_key)
     except Exception as e:
-        st.error(f"❌ Fout bij verbinden met Groq API: {e}")
+        st.error(f"❌ Fout bij verbinden Groove API: {e}")
         st.stop()
 
 groq_client = get_groq_client()
 
-# ─── Functies ─────────────────────────────────────────────────────────────
+# ─── Helper functies ─────────────────────────────────────────────────────
 def read_docx(path: str) -> str:
     doc = docx.Document(path)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
@@ -33,7 +33,7 @@ def read_docx(path: str) -> str:
 
 def get_replacements(template_text: str, context_text: str) -> list[dict]:
     prompt = (
-        "Gegeven de TEMPLATE en CONTEXT, lever een JSON-array van objecten {find, replace}."
+        "Gegeven TEMPLATE en CONTEXT, lever JSON-array van {find, replace}."
         f"\n\nTEMPLATE:\n{template_text}\n\n"
         f"CONTEXT:\n{context_text}"
     )
@@ -41,12 +41,11 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
         model="llama-3.1-8b-instant",
         temperature=0.2,
         messages=[
-            {"role": "system", "content": "Antwoord alleen met de JSON-array, geen extra tekst."},
-            {"role": "user",   "content": prompt}
+            {"role":"system","content":"Antwoord alleen de JSON-array, geen extra tekst."},
+            {"role":"user","content":prompt}
         ]
     )
     content = resp.choices[0].message.content
-    # remove numeric prefixes
     cleaned = re.sub(r"\d+\s*:\s*{", "{", content)
     start = cleaned.find('[')
     end = cleaned.rfind(']') + 1
@@ -63,9 +62,9 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
                 if fm:
                     for j in range(i+1, len(lines)):
                         if '"replace"' in lines[j]:
-                            rm = re.search(r'"replace"\s*:\s*"([^"]*)"', lines[j])
-                            if rm:
-                                rm_val = rm.group(1)
+                            m = re.search(r'"replace"\s*:\s*"([^"]*)"', lines[j])
+                            if m:
+                                rm_val = m.group(1)
                             break
                 if fm and rm_val is not None:
                     replacements.append({"find": fm.group(1), "replace": rm_val})
@@ -94,55 +93,52 @@ def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
     doc.save(buf)
     return buf.getvalue()
 
-# ─── Streamlit UI: hoofdvenster met kolommen ───────────────────────────────
+# ─── Streamlit UI ────────────────────────────────────────────────────────
 col1, col2 = st.columns(2)
 with col1:
-    st.subheader("Upload DOCX-template")
-    tpl_file = st.file_uploader("Kies template (.docx)", type=["docx"] , key="tpl")
+    st.subheader("Template (.docx)")
+    tpl_file = st.file_uploader("Kies template-bestand", type=["docx"], key="tpl")
+    if tpl_file:
+        tpl_path = os.path.join(tempfile.mkdtemp(), "template.docx")
+        with open(tpl_path, "wb") as f:
+            f.write(tpl_file.getbuffer())
+        tpl_text = read_docx(tpl_path)
+        st.subheader("Template-inhoud")
+        st.text_area("", tpl_text, height=200)
 with col2:
-    st.subheader("Upload Context")
-    ctx_file = st.file_uploader("Kies context (.docx of .txt)", type=["docx", "txt"], key="ctx")
+    st.subheader("Context (.docx/.txt)")
+    ctx_file = st.file_uploader("Kies context-bestand", type=["docx","txt"], key="ctx")
+    if ctx_file:
+        tmp_ctx = tempfile.mkdtemp()
+        if ctx_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            ctx_path = os.path.join(tmp_ctx, "context.docx")
+            with open(ctx_path, "wb") as f:
+                f.write(ctx_file.getbuffer())
+            context_text = read_docx(ctx_path)
+        else:
+            context_text = ctx_file.read().decode("utf-8", errors="ignore")
+        st.subheader("Context-inhoud")
+        st.text_area("", context_text, height=200)
 
-# Genereer en download
+# Genereer & toon resultaten
 if tpl_file and ctx_file:
-    tmp_dir = tempfile.mkdtemp()
-    tpl_path = os.path.join(tmp_dir, "template.docx")
-    with open(tpl_path, "wb") as f:
-        f.write(tpl_file.getbuffer())
-    # Lees context
-    if ctx_file.type.startswith("application/vnd.openxmlformats-officedocument.wordprocessingml.document"):
-        ctx_path = os.path.join(tmp_dir, "context.docx")
-        with open(ctx_path, "wb") as f:
-            f.write(ctx_file.getbuffer())
-        context_text = read_docx(ctx_path)
-    else:
-        context_text = ctx_file.read().decode("utf-8", errors="ignore")
-
-    # Knop: Genereer document
     if st.button("🛠️ Genereer document met nieuwe context"):
         try:
-            tpl_text = read_docx(tpl_path)
             replacements = get_replacements(tpl_text, context_text)
-            st.session_state["replacements"] = replacements
+            st.subheader("Aangepaste onderdelen:")
+            for rep in replacements:
+                st.write(f"• Vervang '{rep['find']}' door '{rep['replace']}'")
             doc_bytes = apply_replacements(tpl_path, replacements)
-            st.session_state["doc_bytes"] = doc_bytes
+            st.session_state['doc_bytes'] = doc_bytes
         except Exception as e:
             st.error(f"Fout bij genereren: {e}")
 
-    # Toon vervangingsinformatie als beschikbaar
-    if "replacements" in st.session_state:
-        st.subheader("Aangepaste onderdelen:")
-        for rep in st.session_state["replacements"]:
-            st.write(f"• Vervang '{rep['find']}' door '{rep['replace']}'")
-
-    # Download knop als beschikbaar
-    if "doc_bytes" in st.session_state:
+    if 'doc_bytes' in st.session_state:
         st.download_button(
             "⬇️ Download aangepast document",
-            data=st.session_state["doc_bytes"],
+            data=st.session_state['doc_bytes'],
             file_name="aangepast_template.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 else:
-    st.info("Upload template en context bovenin om te beginnen.")
-    st.info("Upload zowel template als context bovenin om te beginnen.")
+    st.info("Upload zowel template als context om te beginnen.")
