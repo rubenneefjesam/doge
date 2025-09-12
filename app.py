@@ -99,18 +99,25 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
 def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
     """Voert find/replace uit in .docx, behoudt styling."""
     doc = docx.Document(doc_path)
+
     def repl(runs):
-        if not runs: return
+        if not runs:
+            return
         text = ''.join(r.text for r in runs)
         for rep in replacements:
             text = text.replace(rep['find'], rep['replace'])
-        runs[0].text, *[r.text for r in runs[1:]] = text, ['']*(len(runs)-1)
-    for p in doc.paragraphs: repl(p.runs)
+        runs[0].text = text
+        for r in runs[1:]:
+            r.text = ''
+
+    for p in doc.paragraphs:
+        repl(p.runs)
     for tbl in doc.tables:
         for row in tbl.rows:
             for cell in row.cells:
                 for p in cell.paragraphs:
                     repl(p.runs)
+
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
