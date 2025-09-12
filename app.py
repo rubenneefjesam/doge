@@ -46,9 +46,10 @@ def create_docx(template_path: str, source_paths: list[str], out_path: str) -> N
     items = []
     measures = fetch_measures()
     for i, src in enumerate(source_paths):
+        text = read_docx(src)
         items.append({
             "Risico": os.path.basename(src),
-            "Oorzaak": (read_docx(src)[:200] + "...") if read_docx(src) else "",
+            "Oorzaak": (text[:200] + "...") if text else "",
             "Beheersmaatregel": measures[i % len(measures)]
         })
     context = {"risks": items}
@@ -57,18 +58,20 @@ def create_docx(template_path: str, source_paths: list[str], out_path: str) -> N
     doc.save(out_path)
 
 # ─── Streamlit UI ────────────────────────────────────────────────────────
-# Zijbalk voor upload
 st.sidebar.header("Upload bestanden")
+
 tpl_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
 src_files = st.sidebar.file_uploader("Upload Brondocumenten (2 stuks)", type=["docx"], accept_multiple_files=True)
 
 if tpl_file and src_files and len(src_files) == 2:
     # Tijdelijke map
-tmp_dir = tempfile.mkdtemp()
+    tmp_dir = tempfile.mkdtemp()
+    # Sla template op
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
         f.write(tpl_file.getbuffer())
 
+    # Sla brondocumenten op
     src_paths = []
     for sf in src_files:
         p = os.path.join(tmp_dir, sf.name)
