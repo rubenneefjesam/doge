@@ -31,13 +31,14 @@ def read_docx(path: str) -> str:
     doc = docx.Document(path)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
+
 def get_replacements(template_text: str, context_text: str) -> list[dict]:
     """
     Vraag LLM om find/replace instructies als JSON-array.
     """
     prompt = (
-        "Gegeven de TEMPLATE en CONTEXT, lever een JSON-array van objecten {find, replace}:\n\n"
-        f"TEMPLATE:\n{template_text}\n\n"
+        "Gegeven de TEMPLATE en CONTEXT, lever een JSON-array van objecten {find, replace}."
+        f"\n\nTEMPLATE:\n{template_text}\n\n"
         f"CONTEXT:\n{context_text}"
     )
     resp = groq_client.chat.completions.create(
@@ -50,19 +51,18 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
     )
     content = resp.choices[0].message.content
 
-    # Stap 1: strip numerieke prefixes zoals "0:{"
+    # Verwijder numerieke prefixes zoals '0:{'
     cleaned = re.sub(r"\d+\s*:\s*{", "{", content)
-
-    # Stap 2: pak alles tussen de eerste [ en de laatste ]
+    # Extract array tussen [ ]
     start = cleaned.find('[')
-    end   = cleaned.rfind(']') + 1
+    end = cleaned.rfind(']') + 1
     json_str = cleaned[start:end] if start != -1 and end != -1 else cleaned
 
-    # Stap 3: try JSON.loads, met fallback parse
+    # Parse JSON
     try:
         replacements = json.loads(json_str)
     except json.JSONDecodeError:
-        # fallback handmatig parse
+        # Fallback handmatig parse
         replacements = []
         lines = cleaned.splitlines()
         for i, line in enumerate(lines):
@@ -79,8 +79,9 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
                 if fm and rm is not None:
                     replacements.append({"find": fm.group(1), "replace": rm})
 
-    # Stap 4: filter lege/vervaarde replaces
+    # Filter alleen daadwerkelijke vervangingen
     return [r for r in replacements if r.get("find") and r["find"] != r.get("replace")]
+
 
 def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
     """
@@ -91,17 +92,16 @@ def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
     def replace_in_runs(runs):
         if not runs:
             return
-        text = "".join(r.text for r in runs)
+        text = ''.join(r.text for r in runs)
         for rep in replacements:
-            text = text.replace(rep["find"], rep["replace"])
+            text = text.replace(rep['find'], rep['replace'])
         runs[0].text = text
         for r in runs[1:]:
-            r.text = ""
+            r.text = ''
 
-    # vervang in paragrafen
+    # Paragrafen en tabellen verwerken
     for para in doc.paragraphs:
         replace_in_runs(para.runs)
-    # vervang in tabellen
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
@@ -118,7 +118,6 @@ tpl_file = st.sidebar.file_uploader("1) Upload DOCX-template", type=["docx"])
 ctx_file = st.sidebar.file_uploader("2) Upload Context (.docx of .txt)", type=["docx","txt"])
 
 if tpl_file and ctx_file:
-    # Opslaan template
     tmp_dir = tempfile.mkdtemp()
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
@@ -140,19 +139,14 @@ if tpl_file and ctx_file:
     st.subheader("Context preview (eerste 200 tekens)")
     st.text(context_text[:200] + ("…" if len(context_text)>200 else ""))
 
-    if st.button("🔄 Vul en vervang automatisch"):
-        st.info("Genereren vervangingsinstructies…")
-        try:
-            replacements = get_replacements(tpl_text, context_text)
-            st.write("Vervangingslijst:", replacements)
-            doc_bytes = apply_replacements(tpl_path, replacements)
-            st.download_button(
-                "⬇️ Download aangepast document",
-                data=doc_bytes,
-                file_name="aangepast_template.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
-        except Exception as e:
-            st.error(f"Fout bij invullen: {e}")
+    if st.button("⬇️ Download aangepast document"):
+        replacements = get_replacements(tpl_text, context_text)
+        doc_bytes = apply_replacements(tpl_path, replacements)
+        st.download_button(
+            label="Download aangepast document",
+            data=doc_bytes,
+            file_name="aangepast_template.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
 else:
     st.info("Upload template en context in de zijbalk om te starten.")
