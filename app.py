@@ -108,7 +108,11 @@ def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
 # ─────────────────────────────────────────────────────────────────────────────
 # 🧭 Page Navigation
 # ─────────────────────────────────────────────────────────────────────────────
-page = st.sidebar.selectbox("🔖 Navigatie", ["Home", "Generator", "Info"])
+page = st.sidebar.radio(
+    "🔖 Navigatie",
+    ("Home", "Generator", "Info"),
+    index=0
+)
 
 if page == "Home":
     st.markdown("<div class='big-header'>🏠 Welkom bij de DOCX Generator</div>", unsafe_allow_html=True)
