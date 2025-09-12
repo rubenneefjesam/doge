@@ -7,33 +7,55 @@ import re
 import json
 from groq import Groq
 
-# ─── Streamlit Page Config ───────────────────────────────────────────────
-st.set_page_config(page_title="DOCX Generator", layout="wide")
-st.title("📄 DOCX Generator met Templates")
+# ─────────────────────────────────────────────────────────────────────────────┐
+# 🎨 Streamlit Page Config & Global Styles
+# ─────────────────────────────────────────────────────────────────────────────┘
+st.set_page_config(
+    page_title="🎉 DOCX Generator", 
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+st.markdown(
+    """
+    <style>
+    .stButton>button {font-size:16px; font-weight:bold; background-color:#4CAF50; color:white;}
+    .stDownloadButton>button {font-size:16px; font-weight:bold; background-color:#2196F3; color:white;}
+    .stTextArea>div>div>textarea {background-color:#1e1e1e; color:#cfcfcf; font-family:monospace;}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-# ─── Init Groq-client via st.secrets ──────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────┐
+# 🔑 Groq Client Initialization
+# ─────────────────────────────────────────────────────────────────────────────┘
 def get_groq_client():
     api_key = st.secrets.get("groq", {}).get("api_key", "").strip()
     if not api_key:
-        st.error("❌ Voeg Groq API key toe in .streamlit/secrets.toml onder [groq]")
+        st.error("❌ Voeg Groq API key toe in `.streamlit/secrets.toml` onder [groq]")
         st.stop()
     try:
-        return Groq(api_key=api_key)
+        client = Groq(api_key=api_key)
+        return client
     except Exception as e:
-        st.error(f"❌ Fout bij verbinden Groove API: {e}")
+        st.error(f"❌ Fout bij verbinden met Groq API: {e}")
         st.stop()
 
 groq_client = get_groq_client()
 
-# ─── Helper functies ─────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────┐
+# 📄 Utility Functions
+# ─────────────────────────────────────────────────────────────────────────────┘
 def read_docx(path: str) -> str:
+    """Lees platte tekst uit alle paragrafen van een .docx."""
     doc = docx.Document(path)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
 
 def get_replacements(template_text: str, context_text: str) -> list[dict]:
+    """Vraag de LLM om find/replace-instructies als JSON-array."""
     prompt = (
-        "Gegeven TEMPLATE en CONTEXT, lever JSON-array van {find, replace}."
+        "Gegeven TEMPLATE en CONTEXT, lever een JSON-array van objecten {find, replace}."
         f"\n\nTEMPLATE:\n{template_text}\n\n"
         f"CONTEXT:\n{context_text}"
     )
@@ -41,104 +63,99 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
         model="llama-3.1-8b-instant",
         temperature=0.2,
         messages=[
-            {"role":"system","content":"Antwoord alleen de JSON-array, geen extra tekst."},
+            {"role":"system","content":"Antwoord alleen met de JSON-array, geen extra tekst."},
             {"role":"user","content":prompt}
         ]
     )
     content = resp.choices[0].message.content
+    # Cleanup numbered prefixes and extract JSON
     cleaned = re.sub(r"\d+\s*:\s*{", "{", content)
     start = cleaned.find('[')
     end = cleaned.rfind(']') + 1
-    json_str = cleaned[start:end] if start != -1 and end != -1 else cleaned
+    json_str = cleaned[start:end] if start!=-1 and end!=-1 else cleaned
     try:
         replacements = json.loads(json_str)
     except json.JSONDecodeError:
         replacements = []
-        lines = cleaned.splitlines()
-        for i, line in enumerate(lines):
-            if '"find"' in line:
-                fm = re.search(r'"find"\s*:\s*"([^"]*)"', line)
-                rm_val = None
-                if fm:
-                    for j in range(i+1, len(lines)):
-                        if '"replace"' in lines[j]:
-                            m = re.search(r'"replace"\s*:\s*"([^"]*)"', lines[j])
-                            if m:
-                                rm_val = m.group(1)
+        for line in cleaned.splitlines():
+            m_find = re.search(r'"find"\s*:\s*"([^"]*)"', line)
+            if m_find:
+                find_val = m_find.group(1)
+                # find replace on same line or next
+                m_rep = re.search(r'"replace"\s*:\s*"([^"]*)"', line)
+                if not m_rep:
+                    # look ahead
+                    idx = cleaned.splitlines().index(line)
+                    for nxt in cleaned.splitlines()[idx+1:]:
+                        m_rep = re.search(r'"replace"\s*:\s*"([^"]*)"', nxt)
+                        if m_rep:
                             break
-                if fm and rm_val is not None:
-                    replacements.append({"find": fm.group(1), "replace": rm_val})
-    return [r for r in replacements if r.get("find") and r["find"] != r.get("replace")]
+                if m_rep:
+                    replacements.append({"find":find_val, "replace":m_rep.group(1)})
+    # Filter out no-ops
+    return [r for r in replacements if r['find'] and r['find']!=r['replace']]
 
 
 def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
+    """Voert find/replace uit in .docx, behoudt styling."""
     doc = docx.Document(doc_path)
-    def replace_in_runs(runs):
-        if not runs:
-            return
+    def repl(runs):
+        if not runs: return
         text = ''.join(r.text for r in runs)
         for rep in replacements:
             text = text.replace(rep['find'], rep['replace'])
-        runs[0].text = text
-        for r in runs[1:]:
-            r.text = ''
-    for para in doc.paragraphs:
-        replace_in_runs(para.runs)
-    for table in doc.tables:
-        for row in table.rows:
+        runs[0].text, *[r.text for r in runs[1:]] = text, ['']*(len(runs)-1)
+    for p in doc.paragraphs: repl(p.runs)
+    for tbl in doc.tables:
+        for row in tbl.rows:
             for cell in row.cells:
-                for para in cell.paragraphs:
-                    replace_in_runs(para.runs)
+                for p in cell.paragraphs:
+                    repl(p.runs)
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
-# ─── Streamlit UI ────────────────────────────────────────────────────────
-col1, col2 = st.columns(2)
+# ─────────────────────────────────────────────────────────────────────────────┐
+# 🚀 Main Interface
+# ─────────────────────────────────────────────────────────────────────────────┘
+st.markdown("## 👉 Upload en bekijk je documenten")
+col1, col2 = st.columns([1,1])
+
 with col1:
-    st.subheader("Template (.docx)")
-    tpl_file = st.file_uploader("Kies template-bestand", type=["docx"], key="tpl")
+    tpl_file = st.file_uploader("**1. Kies je template**", type="docx", key="tpl")
     if tpl_file:
         tpl_path = os.path.join(tempfile.mkdtemp(), "template.docx")
-        with open(tpl_path, "wb") as f:
-            f.write(tpl_file.getbuffer())
-        tpl_text = read_docx(tpl_path)
-        st.subheader("Template-inhoud")
-        st.text_area("", tpl_text, height=200, key="template_preview")
+        with open(tpl_path, "wb") as f: f.write(tpl_file.getbuffer())
+        st.markdown("**Template-inhoud:**")
+        st.text_area("", read_docx(tpl_path), height=200, key="tpl_preview")
+
 with col2:
-    st.subheader("Context (.docx/.txt)")
-    ctx_file = st.file_uploader("Kies context-bestand", type=["docx","txt"], key="ctx")
+    ctx_file = st.file_uploader("**2. Kies je nieuwe context**", type=["docx","txt"], key="ctx")
     if ctx_file:
-        tmp_ctx = tempfile.mkdtemp()
-        if ctx_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            ctx_path = os.path.join(tmp_ctx, "context.docx")
-            with open(ctx_path, "wb") as f:
-                f.write(ctx_file.getbuffer())
-            context_text = read_docx(ctx_path)
+        tmpc = tempfile.mkdtemp()
+        if ctx_file.type.endswith('document'):
+            cpath = os.path.join(tmpc, "context.docx")
+            with open(cpath,"wb") as f: f.write(ctx_file.getbuffer())
+            context = read_docx(cpath)
         else:
-            context_text = ctx_file.read().decode("utf-8", errors="ignore")
-        st.subheader("Context-inhoud")
-        st.text_area("", context_text, height=200, key="context_preview")
+            context = ctx_file.read().decode('utf-8',errors='ignore')
+        st.markdown("**Context-inhoud:**")
+        st.text_area("", context, height=200, key="ctx_preview")
 
-# Genereer & toon resultaten
 if tpl_file and ctx_file:
-    if st.button("🛠️ Genereer document met nieuwe context"):
-        try:
-            replacements = get_replacements(tpl_text, context_text)
-            st.subheader("Aangepaste onderdelen:")
-            for rep in replacements:
-                st.write(f"• Vervang '{rep['find']}' door '{rep['replace']}'")
-            doc_bytes = apply_replacements(tpl_path, replacements)
-            st.session_state['doc_bytes'] = doc_bytes
-        except Exception as e:
-            st.error(f"Fout bij genereren: {e}")
-
-    if 'doc_bytes' in st.session_state:
+    st.markdown("---")
+    if st.button("🎉 Genereer aangepast document"):
+        tpl_text = read_docx(tpl_path)
+        replacements = get_replacements(tpl_text, context)
+        st.success("🎯 Vervangingsinstructies succesvol gegenereerd:")
+        for rep in replacements:
+            st.write(f"• Vervang '**{rep['find']}**' -> '**{rep['replace']}**'")
+        result = apply_replacements(tpl_path, replacements)
         st.download_button(
-            "⬇️ Download aangepast document",
-            data=st.session_state['doc_bytes'],
+            "⬇️ Download je aangepaste document",
+            data=result,
             file_name="aangepast_template.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 else:
-    st.info("Upload zowel template als context om te beginnen.")
+    st.warning("Upload eerst een template en context om te starten.")
