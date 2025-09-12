@@ -25,80 +25,93 @@ def get_groq_client():
 
 groq_client = get_groq_client()
 
-# ─── Document uitlezen ────────────────────────────────────────────────────
+# ─── Hulpfuncties ────────────────────────────────────────────────────────
 def read_docx(path: str) -> str:
+    """Lees alle paragraven uit een .docx en return als tekst."""
     doc = docx.Document(path)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
-# ─── Vul template via LLM ─────────────────────────────────────────────────
-def enrich_and_fill(template_path: str, source_paths: list[str]) -> bytes:
-    tpl_text = read_docx(template_path)
-    ctx_parts = []
-    for src in source_paths:
-        text = read_docx(src)
-        ctx_parts.append(f"=== CONTEXT FROM {os.path.basename(src)} ===\n{text}")
-    context_text = "\n\n".join(ctx_parts)
+# ─── Vul placeholders via LLM en render template ─────────────────────────
+def fill_placeholders(template_path: str, context_text: str) -> bytes:
+    # Laad template om placeholders te detecteren
+    tpl = DocxTemplate(template_path)
+    # Haal ongedefinieerde variabelen (placeholders) op
+    placeholders = list(tpl.get_undeclared_template_variables())
 
+    # Prompt voor de LLM
     prompt = (
-        "Werk de volgende template volledig bij op basis van de nieuwe context."
-        f" Lever alleen de volledige bijgewerkte template-tekst terug, zonder toelichting of opsommingen."
-        f"\n\n=== TEMPLATE ===\n{tpl_text}"
-        f"\n\n{context_text}"
+        "Je bent een geavanceerde content-assistent. In de template zijn de volgende placeholders aanwezig: "
+        f"{', '.join(placeholders)}. "
+        "Vul elke placeholder met de juiste tekst op basis van de onderstaande context. "
+        "Geef alleen een JSON-object terug waarin elke key de naam is van de placeholder en de value de ingevulde tekst."
+        f"\n\n=== CONTEXT ===\n{context_text}"
     )
 
+    # Chat-call naar de LLM
     response = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         temperature=0.2,
         messages=[
-            {"role": "system", "content": "Je bent een geavanceerde editor: geef alleen de aangepaste documenttekst terug zonder extra uitleg."},
+            {"role": "system", "content": "Je levert altijd een geldig JSON-object zonder extra commentaar."},
             {"role": "user", "content": prompt}
         ]
     )
-    updated = response.choices[0].message.content
+    content = response.choices[0].message.content
 
-    # Sla als DOCX
-    out = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-    doc = docx.Document()
-    for line in updated.split("\n"):
-        doc.add_paragraph(line)
-    doc.save(out.name)
-    out.seek(0)
-    return out.read()
+    # Parse JSON-output
+    import json
+    values = json.loads(content)
+
+    # Render de template met de ontvangen waarden
+    tpl.render(values)
+
+    # Sla op in een tijdelijk bestand en return de bytes
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+    tpl.save(tmp.name)
+    tmp.seek(0)
+    return tmp.read()
 
 # ─── Streamlit UI ────────────────────────────────────────────────────────
 st.sidebar.header("Upload bestanden")
 tpl_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
-src_files = st.sidebar.file_uploader("Upload Brondocumenten", type=["docx"], accept_multiple_files=True)
+ctx_file = st.sidebar.file_uploader("Upload Context-bestand", type=["docx","txt"], help=".docx of .txt met de nieuwe inhoud")
 
-if tpl_file and src_files:
+if tpl_file and ctx_file:
+    # Opslaan in tmp
     tmp_dir = tempfile.mkdtemp()
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
         f.write(tpl_file.getbuffer())
 
-    src_paths = []
-    for sf in src_files:
-        p = os.path.join(tmp_dir, sf.name)
-        with open(p, "wb") as o:
-            o.write(sf.getbuffer())
-        src_paths.append(p)
+    # Lees context
+    if ctx_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        ctx_path = os.path.join(tmp_dir, "context.docx")
+        with open(ctx_path, "wb") as f:
+            f.write(ctx_file.getbuffer())
+        context_text = read_docx(ctx_path)
+    else:
+        context_text = ctx_file.read().decode("utf-8", errors="ignore")
 
-    st.subheader("Template Preview")
-    st.write(read_docx(tpl_path)[:500] + ("…" if len(read_docx(tpl_path))>500 else ""))
-    st.subheader("Context Preview")
-    st.write(read_docx(src_paths[0])[:500] + ("…" if len(read_docx(src_paths[0]))>500 else ""))
+    # Preview
+    st.subheader("Template Preview (eerste 200 tekens)")
+    tpl_preview = read_docx(tpl_path)
+    st.text(tpl_preview[:200] + ("…" if len(tpl_preview)>200 else ""))
 
-    if st.button("Vul template aan met nieuwe/vervangende informatie"):
-        st.info("Document wordt bijgewerkt…")
+    st.subheader("Context Preview (eerste 200 tekens)")
+    st.text(context_text[:200] + ("…" if len(context_text)>200 else ""))
+
+    # Knop voor invullen
+    if st.button("🖋️ Vul template met context"):
+        st.info("Bezig met invullen…")
         try:
-            result_bytes = enrich_and_fill(tpl_path, src_paths)
+            filled_bytes = fill_placeholders(tpl_path, context_text)
             st.download_button(
-                "⬇️ Download bijgewerkt document",
-                data=result_bytes,
-                file_name="bijgewerkt_document.docx",
+                label="⬇️ Download ingevuld document",
+                data=filled_bytes,
+                file_name="gevuld_template.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
         except Exception as e:
-            st.error(f"Bijwerken mislukt: {e}")
+            st.error(f"Invullen mislukt: {e}")
 else:
-    st.info("Upload zowel template als context om te starten.")
+    st.info("Upload zowel je template als je context om te starten.")
