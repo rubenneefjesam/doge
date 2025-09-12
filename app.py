@@ -104,7 +104,7 @@ with col1:
             f.write(tpl_file.getbuffer())
         tpl_text = read_docx(tpl_path)
         st.subheader("Template-inhoud")
-        st.text_area("", tpl_text, height=200)
+        st.text_area("", tpl_text, height=200, key="template_preview")
 with col2:
     st.subheader("Context (.docx/.txt)")
     ctx_file = st.file_uploader("Kies context-bestand", type=["docx","txt"], key="ctx")
@@ -118,7 +118,7 @@ with col2:
         else:
             context_text = ctx_file.read().decode("utf-8", errors="ignore")
         st.subheader("Context-inhoud")
-        st.text_area("", context_text, height=200)
+        st.text_area("", context_text, height=200, key="context_preview")
 
 # Genereer & toon resultaten
 if tpl_file and ctx_file:
