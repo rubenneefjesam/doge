@@ -35,7 +35,7 @@ def fill_placeholders(template_path: str, context_text: str) -> bytes:
 
     # Bouw prompt
     prompt = (
-        "Je bent een content-assistent. Alleen antwoord: een geldig JSON-object met keys als placeholder-namen en values als ingevulde teksten."
+        "Je bent een content-assistent. Geef alleen een geldig JSON-object terug met keys als placeholder-namen en values als de ingevulde teksten."
         f" Placeholders: {', '.join(placeholders)}."
         f" Context:\n{context_text}"
     )
@@ -44,22 +44,35 @@ def fill_placeholders(template_path: str, context_text: str) -> bytes:
     resp = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         temperature=0.0,
-        messages=[{"role":"system","content":prompt}]
+        messages=[{"role": "system", "content": prompt}]
     )
-    content = resp.choices[0].message.content.strip()
+    content = resp.choices[0].message.content
 
+    # JSON-extractie (in geval van extra regels)
+    start = content.find('{')
+    end = content.rfind('}') + 1
+    json_str = content[start:end] if start != -1 and end != -1 else content.strip()
+
+    # Probeer JSON-parsing
     import json
     try:
-        values = json.loads(content)
+        values = json.loads(json_str)
+        # Render en behoud layout
+        tpl.render(values)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+        tpl.save(tmp.name)
+        tmp.seek(0)
+        return tmp.read()
     except json.JSONDecodeError:
-        raise ValueError(f"Ongeldige JSON:\n{content}")
-
-    # Render en bewaar layout
-    tpl.render(values)
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-    tpl.save(tmp.name)
-    tmp.seek(0)
-    return tmp.read()
+        # Fallback: content is volledige template, schrijf platte tekst naar docx
+        from docx import Document
+        doc = Document()
+        for line in content.splitlines():
+            doc.add_paragraph(line)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+        doc.save(tmp.name)
+        tmp.seek(0)
+        return tmp.read()
 
 # ─── Streamlit UI ────────────────────────────────────────────────────────
 st.sidebar.header("Upload bestanden")
