@@ -139,14 +139,28 @@ if tpl_file and ctx_file:
     st.subheader("Context preview (eerste 200 tekens)")
     st.text(context_text[:200] + ("…" if len(context_text)>200 else ""))
 
-    if st.button("⬇️ Download aangepast document"):
-        replacements = get_replacements(tpl_text, context_text)
-        doc_bytes = apply_replacements(tpl_path, replacements)
+    # Stap 1: Genereer vervangingslijst en document
+    if st.button("🛠️ Genereer document met nieuwe context"):
+        try:
+            replacements = get_replacements(tpl_text, context_text)
+            # Toon vervangingsinformatie
+            st.subheader("Aangepaste onderdelen:")
+            for rep in replacements:
+                st.write(f"• Vervang '{rep['find']}' door '{rep['replace']}'")
+            # Maak document
+            doc_bytes = apply_replacements(tpl_path, replacements)
+            st.session_state["doc_bytes"] = doc_bytes
+        except Exception as e:
+            st.error(f"Fout bij genereren: {e}")
+
+    # Stap 2: Download
+    if "doc_bytes" in st.session_state:
         st.download_button(
-            label="Download aangepast document",
-            data=doc_bytes,
+            label="⬇️ Download aangepast document",
+            data=st.session_state["doc_bytes"],
             file_name="aangepast_template.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 else:
+    st.info("Upload template en context in de zijbalk om te starten.")
     st.info("Upload template en context in de zijbalk om te starten.")
