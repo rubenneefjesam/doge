@@ -1,11 +1,10 @@
-# app.py
-
 import os
 import tempfile
+
 from docxtpl import DocxTemplate
 import pandas as pd
 import streamlit as st
-import groq  # let op: we import het module, niet de class Groq
+from groq import Groq  # juiste import
 
 # ─── Streamlit Page Config ───────────────────────────────────────────────
 st.set_page_config(page_title="DOCX Generator", layout="wide")
@@ -13,30 +12,19 @@ st.title("📄 DOCX Generator met Templates")
 
 # ─── Init Groq-client via st.secrets ──────────────────────────────────────
 def get_groq_client():
-    sec = st.secrets.get("groq", {})
-    api_key    = sec.get("api_key",    "").strip()
-    project_id = sec.get("project_id", "").strip()
-    dataset    = sec.get("dataset",    "").strip()
-
-    if not api_key or not project_id or not dataset:
+    api_key = st.secrets.get("groq", {}).get("api_key", "").strip()
+    if not api_key:
         st.sidebar.error(
             "❌ Mist Groq-credentials! Voeg ze toe in `.streamlit/secrets.toml`:\n"
             "[groq]\n"
-            "api_key    = \"...\"\n"
-            "project_id = \"...\"\n"
-            "dataset    = \"...\""
+            "api_key = \"...\"\n"
         )
         st.stop()
 
     try:
-        # Hier gebruiken we de juiste constructor:
-        client = groq.Client(
-            project_id=project_id,
-            dataset=dataset,
-            api_key=api_key
-        )
+        client = Groq(api_key=api_key)
         # (optioneel) korte validatie-call:
-        client.models.list()
+        # bijvoorbeeld client.health() of een andere eenvoudige call
         st.sidebar.success("🔑 Verbonden met Groq API")
         return client
     except Exception as e:
@@ -50,7 +38,7 @@ def fetch_measures():
     query = '*[_type == "beheersmaatregel"][].tekst'
     return groq_client.fetch(query) or ["Geen voorstel beschikbaar"]
 
-# ─── Document-extractie & transformatie ───────────────────────────────────
+# ─── Document-extractie & transformatie ─────────────────────────────────
 def extract_headers(template_path: str) -> list[str]:
     doc = DocxTemplate(template_path)
     return [cell.text.strip() for cell in doc.docx.tables[0].rows[0].cells]
