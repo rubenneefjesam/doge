@@ -19,7 +19,6 @@ def get_groq_client():
             "api_key = \"...\"\n"
         )
         st.stop()
-
     try:
         client = Groq(api_key=api_key)
         st.sidebar.success("🔑 Verbonden met Groq API")
@@ -61,11 +60,11 @@ def create_docx(template_path: str, source_paths: list[str], out_path: str) -> N
 st.sidebar.header("Upload bestanden")
 
 tpl_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
-src_files = st.sidebar.file_uploader("Upload Brondocumenten (2 stuks)", type=["docx"], accept_multiple_files=True)
+src_files = st.sidebar.file_uploader("Upload Brondocumenten", type=["docx"], accept_multiple_files=True)
 
-if tpl_file and src_files and len(src_files) == 2:
+if tpl_file and src_files:
     # Tijdelijke map
-    tmp_dir = tempfile.mkdtemp()
+tmp_dir = tempfile.mkdtemp()
     # Sla template op
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
@@ -79,18 +78,17 @@ if tpl_file and src_files and len(src_files) == 2:
             out.write(sf.getbuffer())
         src_paths.append(p)
 
-    # Rechter scherm met twee kolommen
+    # Rechter scherm met twee kolommen: template & eerste brondocument
     st.subheader("Voorbeeldweergave documenten")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"**Template:** {tpl_file.name}")
         st.write(read_docx(tpl_path))
     with col2:
-        st.markdown(f"**Brondocument:** {src_files[1].name}")
-        st.write(read_docx(src_paths[1]))
+        st.markdown(f"**Brondocument:** {src_files[0].name}")
+        st.write(read_docx(src_paths[0]))
 
-    # Knop onder de weergave
-    if st.button("Vul template aan met nieuwe/vervangende informatie"):
+    # Knop onder de weergave\ n    if st.button("Vul template aan met nieuwe/vervangende informatie"):
         out_path = os.path.join(tmp_dir, "resultaat.docx")
         create_docx(tpl_path, src_paths, out_path)
         with open(out_path, "rb") as f:
@@ -100,4 +98,4 @@ if tpl_file and src_files and len(src_files) == 2:
                 file_name="resultaat.docx"
             )
 else:
-    st.info("Upload een template en precies twee brondocumenten via de zijbalk.")
+    st.info("Upload een template en minimaal één brondocument via de zijbalk.")
