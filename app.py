@@ -48,17 +48,28 @@ def fill_placeholders(template_path: str, context_text: str) -> bytes:
     )
 
     # Chat-call naar de LLM
-    response = groq_client.chat.completions.create(
+        response = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
-        temperature=0.2,
+        temperature=0.0,
         messages=[
-            {"role": "system", "content": "Je levert altijd een geldig JSON-object zonder extra commentaar."},
+            {"role": "system", "content": (
+                "Je bent een geavanceerde content-assistent."
+                " Antwoord strikt met een geldig JSON-object zonder toelichting, markdown of extra tekst."
+            )},
             {"role": "user", "content": prompt}
         ]
     )
-    content = response.choices[0].message.content
+    content = response.choices[0].message.content.strip()
 
     # Parse JSON-output
+    import json
+    try:
+        values = json.loads(content)
+    except json.JSONDecodeError:
+        # Toon wat er misging als raw output bij fout
+        raise ValueError(f"JSON niet geldig:\n{content}")
+
+    # Render de template met de ontvangen waarden
     import json
     values = json.loads(content)
 
