@@ -65,18 +65,15 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
     Vraag LLM om een lijst van find/replace-instructies als JSON.
     """
     prompt = (
-        "Gegeven de onderstaande template-tekst en nieuwe context, lever **strikt** een JSON-array van objecten zonder indexnummers. Elk object heeft twee velden: 'find' en 'replace'. Voorbeeld:
-[
-  {"find": "oude tekst", "replace": "nieuwe tekst"},
-  ...
-]
-
-TEMPLATE:
-{template_text}
-
-CONTEXT:
-{context_text}
-"],
+        "Gegeven de onderstaande template-tekst en nieuwe context, lever strikt een JSON-array van objecten zonder indexnummers. "
+        "Elk object heeft twee velden: 'find' en 'replace'. Voorbeeld:\n"
+        "[\n"
+        "  {\"find\": \"oude tekst\", \"replace\": \"nieuwe tekst\"},\n"
+        "  ...\n"
+        "]\n\n"
+        f"TEMPLATE:\n{template_text}\n\n"
+        f"CONTEXT:\n{context_text}"
+    )
     resp = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         temperature=0.2,
@@ -92,7 +89,7 @@ CONTEXT:
     json_str = content[start:end] if start != -1 and end != -1 else content.strip()
     import json
     replacements = json.loads(json_str)
-
+    return replacements
 
 # ─── Streamlit UI ────────────────────────────────────────────────────────
 st.sidebar.header("Upload bestanden")
