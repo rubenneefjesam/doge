@@ -1,111 +1,108 @@
 import os
 import tempfile
-
 from docxtpl import DocxTemplate
-import pandas as pd
 import streamlit as st
-from groq import Groq  # juiste import
+import docx
+
 
 # ─── Streamlit Page Config ───────────────────────────────────────────────
 st.set_page_config(page_title="DOCX Generator", layout="wide")
 st.title("📄 DOCX Generator met Templates")
 
-# ─── Init Groq-client via st.secrets ──────────────────────────────────────
-def get_groq_client():
-    api_key = st.secrets.get("groq", {}).get("api_key", "").strip()
-    if not api_key:
-        st.sidebar.error(
-            "❌ Mist Groq-credentials! Voeg ze toe in `.streamlit/secrets.toml`:\n"
-            "[groq]\n"
-            "api_key = \"...\"\n"
-        )
-        st.stop()
 
-    try:
-        client = Groq(api_key=api_key)
-        # (optioneel) korte validatie-call:
-        # bijvoorbeeld client.health() of een andere eenvoudige call
-        st.sidebar.success("🔑 Verbonden met Groq API")
-        return client
-    except Exception as e:
-        st.sidebar.error(f"❌ Fout bij verbinden met Groq API: {e}")
-        st.stop()
+# ─── Functie om Groq-client op te halen (ongewijzigd) ┬────────────────────
+from groq import Groq
+
+
+def get_groq_client():
+api_key = st.secrets.get("groq", {}).get("api_key", "").strip()
+if not api_key:
+st.sidebar.error(
+"❌ Mist Groq-credentials! Voeg ze toe in `.streamlit/secrets.toml`:\n"
+"[groq]\n"
+"api_key = \"...\"\n"
+)
+st.stop()
+
+
+try:
+client = Groq(api_key=api_key)
+st.sidebar.success("🔑 Verbonden met Groq API")
+return client
+except Exception as e:
+st.sidebar.error(f"❌ Fout bij verbinden met Groq API: {e}")
+st.stop()
+
 
 groq_client = get_groq_client()
 
+
 # ─── Functie om maatregelen op te halen ───────────────────────────────────
 def fetch_measures():
-    query = '*[_type == "beheersmaatregel"][].tekst'
-    return groq_client.fetch(query) or ["Geen voorstel beschikbaar"]
+query = '*[_type == "beheersmaatregel"][].tekst'
+return groq_client.fetch(query) or ["Geen voorstel beschikbaar"]
 
-# ─── Document-extractie & transformatie ─────────────────────────────────
-def extract_headers(template_path: str) -> list[str]:
-    doc = DocxTemplate(template_path)
-    return [cell.text.strip() for cell in doc.docx.tables[0].rows[0].cells]
 
-def extract_data(paths: list[str]) -> list[dict]:
-    return [
-        {
-            "Risico": f"Risico uit {os.path.basename(p)}",
-            "Oorzaak": f"Oorzaak uit {os.path.basename(p)}",
-            "Beheersmaatregel": None
-        }
-        for p in paths
-    ]
+# ─── Document uitlezen ────────────────────────────────────────────────────
+def read_docx(path: str) -> str:
+doc = docx.Document(path)
+return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
-def fill_measures(items: list[dict]) -> list[dict]:
-    measures = fetch_measures()
-    for i, item in enumerate(items):
-        if not item["Beheersmaatregel"]:
-            item["Beheersmaatregel"] = measures[i % len(measures)]
-    return items
 
-def create_docx(template_path: str, df: pd.DataFrame, out_path: str) -> None:
-    context = {"risks": df.to_dict(orient="records")}
-    doc = DocxTemplate(template_path)
-    doc.render(context)
-    doc.save(out_path)
+# ─── Document genereren ─────────────────────────────────────────────────
+def create_docx(template_path: str, source_paths: list[str], out_path: str) -> None:
+# Simpele vullogica: voor elk bronbestand een maatregel
+items = []
+measures = fetch_measures()
+for i, src in enumerate(source_paths):
+items.append({
+"Risico": os.path.basename(src),
+"Oorzaak": read_docx(src)[:200] + "...",
+"Beheersmaatregel": measures[i % len(measures)]
+})
+df_records = items
+context = {"risks": df_records}
+doc = DocxTemplate(template_path)
+doc.render(context)
+doc.save(out_path)
+
 
 # ─── Streamlit UI ────────────────────────────────────────────────────────
-st.sidebar.header("Stap 1: Upload bestanden")
-template_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
-source_files  = st.sidebar.file_uploader("Upload Brondocumenten", type=["docx"], accept_multiple_files=True)
+# Zijbalk voor upload
+st.sidebar.header("Upload bestanden")
+tpl_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
+src_files = st.sidebar.file_uploader("Upload Brondocumenten (2 stuks)", type=["docx"], accept_multiple_files=True)
 
-if template_file and source_files:
-    tmp_dir  = tempfile.mkdtemp()
-    tpl_path = os.path.join(tmp_dir, "template.docx")
-    with open(tpl_path, "wb") as f:
-        f.write(template_file.getbuffer())
 
-    paths = []
-    for sf in source_files:
-        p = os.path.join(tmp_dir, sf.name)
-        with open(p, "wb") as out:
-            out.write(sf.getbuffer())
-        paths.append(p)
+if tpl_file and src_files and len(src_files) == 2:
+# Opslaan temp
+tmp = tempfile.mkdtemp()
+tpl_path = os.path.join(tmp, "template.docx")
+with open(tpl_path, "wb") as f:
+f.write(tpl_file.getbuffer())
 
-    # Stap 2: Toon kolommen uit template
-    st.subheader("Stap 2: Gevonden kolommen")
-    st.write(extract_headers(tpl_path))
 
-    # Stap 3: Data extraheren en aanvullen
-    data = extract_data(paths)
-    df   = pd.DataFrame(fill_measures(data))
+src_paths = []
+for sf in src_files:
+p = os.path.join(tmp, sf.name)
+with open(p, "wb") as out:
+out.write(sf.getbuffer())
+src_paths.append(p)
 
-    # Stap 4: Controleer en bewerk
-    st.subheader("Stap 3: Controleer en bewerk")
-    edited = st.experimental_data_editor(df, num_rows="dynamic")
 
-    # Stap 5: Genereer DOCX
-    st.subheader("Stap 4: Genereer document")
-    if st.button("Genereer document"):
-        out_file = os.path.join(tmp_dir, "resultaat.docx")
-        create_docx(tpl_path, edited, out_file)
-        with open(out_file, "rb") as f:
-            st.download_button(
-                label="Download .docx",
-                data=f,
-                file_name="resultaat.docx"
-            )
-else:
-    st.info("Upload eerst een template en minimaal één brondocument via de zijbalk.")
+# Rechter scherm met twee kolommen
+st.subheader("Voorbeeldweergave documenten")
+col1, col2 = st.columns(2)
+with col1:
+st.markdown(f"**Template:** {tpl_file.name}")
+st.write(read_docx(tpl_path))
+with col2:
+st.markdown(f"**Brondocument:** {src_files[1].name}")
+st.write(read_docx(src_paths[1]))
+
+
+# Button onder aan
+if st.button("Vul template aan met nieuwe/vervangende informatie"):
+out_path = os.path.join(tmp, "resultaat.docx")
+create_docx(tpl_path, src_paths, out_path)
+st.info("Upload een template en precies twee brondocumenten via de zijbalk.")
