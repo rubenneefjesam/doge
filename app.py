@@ -36,8 +36,9 @@ def read_docx(path: str) -> str:
 # ─── Vul template via LLM ─────────────────────────────────────────────────
 def enrich_and_fill(template_path: str, source_paths: list[str]) -> bytes:
     # Lees template placeholder-namen
-tpl = DocxTemplate(template_path)
+    tpl = DocxTemplate(template_path)
     fields = [cell.text.strip() for cell in tpl.docx.tables[0].rows[0].cells]
+
     # Bouw prompt
     parts = [f"Template fields: {', '.join(fields)}."]
     for src in source_paths:
@@ -59,11 +60,13 @@ tpl = DocxTemplate(template_path)
         ]
     )
     content = response.choices[0].message.content
+
     # Parse JSON
     import json
     records = json.loads(content)
+
     # Render en sla op
-tpl.render({"risks": records})
+    tpl.render({"risks": records})
     out = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
     tpl.save(out.name)
     out.seek(0)
@@ -79,6 +82,7 @@ if tpl_file and src_files:
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
         f.write(tpl_file.getbuffer())
+
     src_paths = []
     for sf in src_files:
         p = os.path.join(tmp_dir, sf.name)
@@ -86,15 +90,18 @@ if tpl_file and src_files:
             o.write(sf.getbuffer())
         src_paths.append(p)
 
+    # Weergave naast elkaar
     st.subheader("Voorbeeldweergave documenten")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"**Template:** {tpl_file.name}")
         st.write(read_docx(tpl_path))
     with col2:
+        # Als meerdere bronnen, toon de eerste
         st.markdown(f"**Brondocument:** {src_files[0].name}")
         st.write(read_docx(src_paths[0]))
 
+    # Knop om te verrijken en invullen
     if st.button("Vul template aan met nieuwe/vervangende informatie"):
         st.info("Bezig met invullen via LLM…")
         try:
