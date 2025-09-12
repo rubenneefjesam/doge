@@ -25,7 +25,7 @@ def get_groq_client():
         st.sidebar.error(f"❌ Fout bij verbinden met Groq API: {e}")
         st.stop()
 
-# Haal de client op
+# Groq-client ophalen
 groq_client = get_groq_client()
 
 # ─── Document uitlezen ────────────────────────────────────────────────────
@@ -35,38 +35,41 @@ def read_docx(path: str) -> str:
 
 # ─── Vul template via LLM ─────────────────────────────────────────────────
 def enrich_and_fill(template_path: str, source_paths: list[str]) -> bytes:
-    # Lees template placeholder-namen
-    tpl = DocxTemplate(template_path)
-    fields = [cell.text.strip() for cell in tpl.docx.tables[0].rows[0].cells]
+    # Bepaal vaste velden uit je template
+    fields = ["Risico", "Oorzaak", "Beheersmaatregel"]
 
-    # Bouw prompt
-    parts = [f"Template fields: {', '.join(fields)}."]
+    # Bouw prompt met alle documenten
+    parts = []
     for src in source_paths:
         text = read_docx(src)
-        parts.append(f"Brondocument ({os.path.basename(src)}):\n{text}")
-    prompt_intro = (
-        "Vul het template in met de volgende brondocumenten."
-        f" Geef per rij een entry voor: {', '.join(fields)}. Output in JSON array formaat."
+        parts.append(f"Document '{os.path.basename(src)}':\n{text}")
+    prompt = (
+        "Je bent een assistent voor het vullen van een DOCX-template. "
+        f"Het template heeft velden: {', '.join(fields)}."
+        " Maak een JSON-array waarbij elk object deze velden bevat."
+        " Gebruik de inhoud van de volgende documenten om de waarden te vullen."
+        " Output alleen de JSON-array zonder extra commentaar."
+        + "\n\n" + "\n\n".join(parts)
     )
-    full_prompt = prompt_intro + "\n\n" + "\n\n".join(parts)
 
-    # Chat-call naar LLM
+    # Stuur één gecombineerde chat-aanroep
     response = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         temperature=0.2,
         messages=[
-            {"role": "system", "content": "Je bent een data-assistent die JSON-outputs levert voor DOCX-sjablonen."},
-            {"role": "user", "content": full_prompt}
+            {"role": "system", "content": "Je bent een data-assistent die JSON levert voor DOCX-templates."},
+            {"role": "user", "content": prompt}
         ]
     )
     content = response.choices[0].message.content
-
-    # Parse JSON
     import json
     records = json.loads(content)
 
-    # Render en sla op
+    # Render template met de ontvangen records
+    tpl = DocxTemplate(template_path)
     tpl.render({"risks": records})
+
+    # Sla op en return als bytes
     out = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
     tpl.save(out.name)
     out.seek(0)
@@ -90,18 +93,17 @@ if tpl_file and src_files:
             o.write(sf.getbuffer())
         src_paths.append(p)
 
-    # Weergave naast elkaar
+    # Toon template en eerste bron naast elkaar
     st.subheader("Voorbeeldweergave documenten")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"**Template:** {tpl_file.name}")
         st.write(read_docx(tpl_path))
     with col2:
-        # Als meerdere bronnen, toon de eerste
         st.markdown(f"**Brondocument:** {src_files[0].name}")
         st.write(read_docx(src_paths[0]))
 
-    # Knop om te verrijken en invullen
+    # Knop om template te verrijken en invullen
     if st.button("Vul template aan met nieuwe/vervangende informatie"):
         st.info("Bezig met invullen via LLM…")
         try:
@@ -115,4 +117,4 @@ if tpl_file and src_files:
         except Exception as e:
             st.error(f"Invullen mislukt: {e}")
 else:
-    st.info("Upload een template en ten minste één brondocument via de zijbalk.")
+    st.info("Upload een template en minimaal één brondocument via de zijbalk.")
