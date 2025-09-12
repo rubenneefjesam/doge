@@ -15,27 +15,23 @@ st.title("📄 DOCX Generator met Templates")
 def get_groq_client():
     api_key = st.secrets.get("groq", {}).get("api_key", "").strip()
     if not api_key:
-        st.sidebar.error("❌ Voeg Groq API key toe in .streamlit/secrets.toml onder [groq]")
+        st.error("❌ Voeg Groq API key toe in .streamlit/secrets.toml onder [groq]")
         st.stop()
     try:
         return Groq(api_key=api_key)
     except Exception as e:
-        st.sidebar.error(f"❌ Fout bij verbinden met Groq API: {e}")
+        st.error(f"❌ Fout bij verbinden met Groq API: {e}")
         st.stop()
 
 groq_client = get_groq_client()
 
 # ─── Functies ─────────────────────────────────────────────────────────────
 def read_docx(path: str) -> str:
-    """Lees alle tekstuele paragrafen uit een .docx-bestand."""
     doc = docx.Document(path)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
 
 def get_replacements(template_text: str, context_text: str) -> list[dict]:
-    """
-    Vraag LLM om find/replace instructies als JSON-array.
-    """
     prompt = (
         "Gegeven de TEMPLATE en CONTEXT, lever een JSON-array van objecten {find, replace}."
         f"\n\nTEMPLATE:\n{template_text}\n\n"
@@ -50,45 +46,34 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
         ]
     )
     content = resp.choices[0].message.content
-
-    # Verwijder numerieke prefixes zoals '0:{'
+    # remove numeric prefixes
     cleaned = re.sub(r"\d+\s*:\s*{", "{", content)
-    # Extract array tussen [ ]
     start = cleaned.find('[')
     end = cleaned.rfind(']') + 1
     json_str = cleaned[start:end] if start != -1 and end != -1 else cleaned
-
-    # Parse JSON
     try:
         replacements = json.loads(json_str)
     except json.JSONDecodeError:
-        # Fallback handmatig parse
         replacements = []
         lines = cleaned.splitlines()
         for i, line in enumerate(lines):
             if '"find"' in line:
                 fm = re.search(r'"find"\s*:\s*"([^"]*)"', line)
-                rm = None
+                rm_val = None
                 if fm:
                     for j in range(i+1, len(lines)):
                         if '"replace"' in lines[j]:
-                            m = re.search(r'"replace"\s*:\s*"([^"]*)"', lines[j])
-                            if m:
-                                rm = m.group(1)
+                            rm = re.search(r'"replace"\s*:\s*"([^"]*)"', lines[j])
+                            if rm:
+                                rm_val = rm.group(1)
                             break
-                if fm and rm is not None:
-                    replacements.append({"find": fm.group(1), "replace": rm})
-
-    # Filter alleen daadwerkelijke vervangingen
+                if fm and rm_val is not None:
+                    replacements.append({"find": fm.group(1), "replace": rm_val})
     return [r for r in replacements if r.get("find") and r["find"] != r.get("replace")]
 
 
 def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
-    """
-    Past find/replace-operaties toe in een .docx en behoudt alle stijlen.
-    """
     doc = docx.Document(doc_path)
-
     def replace_in_runs(runs):
         if not runs:
             return
@@ -98,8 +83,6 @@ def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
         runs[0].text = text
         for r in runs[1:]:
             r.text = ''
-
-    # Paragrafen en tabellen verwerken
     for para in doc.paragraphs:
         replace_in_runs(para.runs)
     for table in doc.tables:
@@ -107,24 +90,28 @@ def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
             for cell in row.cells:
                 for para in cell.paragraphs:
                     replace_in_runs(para.runs)
-
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
-# ─── Streamlit UI ────────────────────────────────────────────────────────
-st.sidebar.header("Upload bestanden")
-tpl_file = st.sidebar.file_uploader("1) Upload DOCX-template", type=["docx"])
-ctx_file = st.sidebar.file_uploader("2) Upload Context (.docx of .txt)", type=["docx","txt"])
+# ─── Streamlit UI: hoofdvenster met kolommen ───────────────────────────────
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("Upload DOCX-template")
+    tpl_file = st.file_uploader("Kies template (.docx)", type=["docx"] , key="tpl")
+with col2:
+    st.subheader("Upload Context")
+    ctx_file = st.file_uploader("Kies context (.docx of .txt)", type=["docx", "txt"], key="ctx")
 
+# Genereer en download
 if tpl_file and ctx_file:
+    # Opslaan template
     tmp_dir = tempfile.mkdtemp()
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
         f.write(tpl_file.getbuffer())
-
     # Lees context
-    if ctx_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+    if ctx_file.type.startswith("application/vnd.openxmlformats-officedocument.wordprocessingml.document"):
         ctx_path = os.path.join(tmp_dir, "context.docx")
         with open(ctx_path, "wb") as f:
             f.write(ctx_file.getbuffer())
@@ -132,16 +119,10 @@ if tpl_file and ctx_file:
     else:
         context_text = ctx_file.read().decode("utf-8", errors="ignore")
 
-    # Previews
-    st.subheader("Template preview (eerste 200 tekens)")
-    tpl_text = read_docx(tpl_path)
-    st.text(tpl_text[:200] + ("…" if len(tpl_text)>200 else ""))
-    st.subheader("Context preview (eerste 200 tekens)")
-    st.text(context_text[:200] + ("…" if len(context_text)>200 else ""))
-
-    # Stap 1: Genereer vervangingslijst en document
+    # Generate button
     if st.button("🛠️ Genereer document met nieuwe context"):
         try:
+            tpl_text = read_docx(tpl_path)
             replacements = get_replacements(tpl_text, context_text)
             # Toon vervangingsinformatie
             st.subheader("Aangepaste onderdelen:")
@@ -153,14 +134,13 @@ if tpl_file and ctx_file:
         except Exception as e:
             st.error(f"Fout bij genereren: {e}")
 
-    # Stap 2: Download
+    # Download knop
     if "doc_bytes" in st.session_state:
         st.download_button(
-            label="⬇️ Download aangepast document",
+            "⬇️ Download aangepast document",
             data=st.session_state["doc_bytes"],
             file_name="aangepast_template.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 else:
-    st.info("Upload template en context in de zijbalk om te starten.")
-    st.info("Upload template en context in de zijbalk om te starten.")
+    st.info("Upload zowel template als context bovenin om te beginnen.")
