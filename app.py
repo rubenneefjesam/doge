@@ -105,7 +105,6 @@ with col2:
 
 # Genereer en download
 if tpl_file and ctx_file:
-    # Opslaan template
     tmp_dir = tempfile.mkdtemp()
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
@@ -119,22 +118,24 @@ if tpl_file and ctx_file:
     else:
         context_text = ctx_file.read().decode("utf-8", errors="ignore")
 
-    # Generate button
+    # Knop: Genereer document
     if st.button("🛠️ Genereer document met nieuwe context"):
         try:
             tpl_text = read_docx(tpl_path)
             replacements = get_replacements(tpl_text, context_text)
-            # Toon vervangingsinformatie
-            st.subheader("Aangepaste onderdelen:")
-            for rep in replacements:
-                st.write(f"• Vervang '{rep['find']}' door '{rep['replace']}'")
-            # Maak document
+            st.session_state["replacements"] = replacements
             doc_bytes = apply_replacements(tpl_path, replacements)
             st.session_state["doc_bytes"] = doc_bytes
         except Exception as e:
             st.error(f"Fout bij genereren: {e}")
 
-    # Download knop
+    # Toon vervangingsinformatie als beschikbaar
+    if "replacements" in st.session_state:
+        st.subheader("Aangepaste onderdelen:")
+        for rep in st.session_state["replacements"]:
+            st.write(f"• Vervang '{rep['find']}' door '{rep['replace']}'")
+
+    # Download knop als beschikbaar
     if "doc_bytes" in st.session_state:
         st.download_button(
             "⬇️ Download aangepast document",
@@ -143,4 +144,5 @@ if tpl_file and ctx_file:
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
 else:
+    st.info("Upload template en context bovenin om te beginnen.")
     st.info("Upload zowel template als context bovenin om te beginnen.")
