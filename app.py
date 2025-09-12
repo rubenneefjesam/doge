@@ -3,6 +3,8 @@ import io
 import tempfile
 import streamlit as st
 import docx
+import re
+import json
 from groq import Groq
 
 # ─── Streamlit Page Config ───────────────────────────────────────────────
@@ -16,8 +18,7 @@ def get_groq_client():
         st.sidebar.error("❌ Voeg Groq API key toe in .streamlit/secrets.toml onder [groq]")
         st.stop()
     try:
-        client = Groq(api_key=api_key)
-        return client
+        return Groq(api_key=api_key)
     except Exception as e:
         st.sidebar.error(f"❌ Fout bij verbinden met Groq API: {e}")
         st.stop()
@@ -30,65 +31,83 @@ def read_docx(path: str) -> str:
     doc = docx.Document(path)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
-
 def get_replacements(template_text: str, context_text: str) -> list[dict]:
     """
     Vraag LLM om find/replace instructies als JSON-array.
     """
     prompt = (
-        "Gegeven de TEMPLATE en CONTEXT, lever een JSON-array van objecten {find, replace}."
-        f"\n\nTEMPLATE:\n{template_text}\n\n"
+        "Gegeven de TEMPLATE en CONTEXT, lever een JSON-array van objecten {find, replace}:\n\n"
+        f"TEMPLATE:\n{template_text}\n\n"
         f"CONTEXT:\n{context_text}"
     )
     resp = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         temperature=0.2,
         messages=[
-            {"role":"system","content":"Geef alleen de JSON-array, geen extra tekst."},
-            {"role":"user","content":prompt}
+            {"role": "system", "content": "Antwoord alleen met de JSON-array, geen extra tekst."},
+            {"role": "user",   "content": prompt}
         ]
     )
     content = resp.choices[0].message.content
-    # Verwijder nummering en pak array\ n    cleaned = content
-    # extract between [ ]
-    start = cleaned.find('[')
-    end = cleaned.rfind(']') + 1
-    json_str = cleaned[start:end] if start != -1 and end != -1 else cleaned
-    import json, re
-    # remove numeric prefixes
-    json_str = re.sub(r"\d+\s*:\s*{", "{", json_str)
-    replacements = json.loads(json_str)
-    # filter zinvolle vervangingen
-    return [r for r in replacements if r.get('find') and r.get('find') != r.get('replace')]
 
+    # Stap 1: strip numerieke prefixes zoals "0:{"
+    cleaned = re.sub(r"\d+\s*:\s*{", "{", content)
+
+    # Stap 2: pak alles tussen de eerste [ en de laatste ]
+    start = cleaned.find('[')
+    end   = cleaned.rfind(']') + 1
+    json_str = cleaned[start:end] if start != -1 and end != -1 else cleaned
+
+    # Stap 3: try JSON.loads, met fallback parse
+    try:
+        replacements = json.loads(json_str)
+    except json.JSONDecodeError:
+        # fallback handmatig parse
+        replacements = []
+        lines = cleaned.splitlines()
+        for i, line in enumerate(lines):
+            if '"find"' in line:
+                fm = re.search(r'"find"\s*:\s*"([^"]*)"', line)
+                rm = None
+                if fm:
+                    for j in range(i+1, len(lines)):
+                        if '"replace"' in lines[j]:
+                            m = re.search(r'"replace"\s*:\s*"([^"]*)"', lines[j])
+                            if m:
+                                rm = m.group(1)
+                            break
+                if fm and rm is not None:
+                    replacements.append({"find": fm.group(1), "replace": rm})
+
+    # Stap 4: filter lege/vervaarde replaces
+    return [r for r in replacements if r.get("find") and r["find"] != r.get("replace")]
 
 def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
     """
-    Past find/replace-operaties toe in een .docx, behoudt alle stijlen.
+    Past find/replace-operaties toe in een .docx en behoudt alle stijlen.
     """
     doc = docx.Document(doc_path)
 
     def replace_in_runs(runs):
         if not runs:
             return
-        text = ''.join(r.text for r in runs)
+        text = "".join(r.text for r in runs)
         for rep in replacements:
-            text = text.replace(rep['find'], rep['replace'])
+            text = text.replace(rep["find"], rep["replace"])
         runs[0].text = text
         for r in runs[1:]:
-            r.text = ''
+            r.text = ""
 
-    # paragrafen
+    # vervang in paragrafen
     for para in doc.paragraphs:
         replace_in_runs(para.runs)
-    # tabellen
+    # vervang in tabellen
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for para in cell.paragraphs:
                     replace_in_runs(para.runs)
 
-    # export als bytes
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
@@ -99,12 +118,13 @@ tpl_file = st.sidebar.file_uploader("1) Upload DOCX-template", type=["docx"])
 ctx_file = st.sidebar.file_uploader("2) Upload Context (.docx of .txt)", type=["docx","txt"])
 
 if tpl_file and ctx_file:
+    # Opslaan template
     tmp_dir = tempfile.mkdtemp()
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
         f.write(tpl_file.getbuffer())
 
-    # lees context
+    # Lees context
     if ctx_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
         ctx_path = os.path.join(tmp_dir, "context.docx")
         with open(ctx_path, "wb") as f:
@@ -113,7 +133,7 @@ if tpl_file and ctx_file:
     else:
         context_text = ctx_file.read().decode("utf-8", errors="ignore")
 
-    # preview
+    # Previews
     st.subheader("Template preview (eerste 200 tekens)")
     tpl_text = read_docx(tpl_path)
     st.text(tpl_text[:200] + ("…" if len(tpl_text)>200 else ""))
