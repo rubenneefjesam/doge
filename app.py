@@ -16,80 +16,82 @@ def get_groq_client():
         st.sidebar.error("❌ Voeg Groq API key toe in .streamlit/secrets.toml onder [groq]")
         st.stop()
     try:
-        return Groq(api_key=api_key)
+        client = Groq(api_key=api_key)
+        return client
     except Exception as e:
-        st.sidebar.error(f"❌ Fout bij verbinden Groq API: {e}")
+        st.sidebar.error(f"❌ Fout bij verbinden met Groq API: {e}")
         st.stop()
 
 groq_client = get_groq_client()
 
 # ─── Functies ─────────────────────────────────────────────────────────────
 def read_docx(path: str) -> str:
+    """Lees alle tekstuele paragrafen uit een .docx-bestand."""
     doc = docx.Document(path)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
 
-def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
-    """
-    Past find/replace-operaties toe in het Word-document en behoudt alle opmaak.
-    """
-    doc = docx.Document(doc_path)
-    def replace_in_runs(runs):
-        text = ''.join(r.text for r in runs)
-        for rep in replacements:
-            if rep['find'] in text:
-                text = text.replace(rep['find'], rep['replace'])
-        # herbouw first run en clear others
-        runs[0].text = text
-        for r in runs[1:]:
-            r.text = ''
-
-    # vervang in paragrafen
-    for para in doc.paragraphs:
-        replace_in_runs(para.runs)
-    # vervang in tabellen
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    replace_in_runs(para.runs)
-
-    # schrijf naar bytes
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
-
-
 def get_replacements(template_text: str, context_text: str) -> list[dict]:
     """
-    Vraag LLM om een lijst van find/replace-instructies als JSON.
+    Vraag LLM om find/replace instructies als JSON-array.
     """
     prompt = (
-        "Gegeven de onderstaande template-tekst en nieuwe context, lever strikt een JSON-array van objecten zonder indexnummers. "
-        "Elk object heeft twee velden: 'find' en 'replace'. Voorbeeld:\n"
-        "[\n"
-        "  {\"find\": \"oude tekst\", \"replace\": \"nieuwe tekst\"},\n"
-        "  ...\n"
-        "]\n\n"
-        f"TEMPLATE:\n{template_text}\n\n"
+        "Gegeven de TEMPLATE en CONTEXT, lever een JSON-array van objecten {find, replace}."
+        f"\n\nTEMPLATE:\n{template_text}\n\n"
         f"CONTEXT:\n{context_text}"
     )
     resp = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         temperature=0.2,
         messages=[
-            {"role":"system","content":"Antwoord alleen de JSON-array, zonder uitleg, markdown of opsomming."},
-            {"role":"user","content": prompt}
+            {"role":"system","content":"Geef alleen de JSON-array, geen extra tekst."},
+            {"role":"user","content":prompt}
         ]
     )
     content = resp.choices[0].message.content
-    # JSON-extractie tussen eerste '[' en laatste ']'
-    start = content.find('[')
-    end = content.rfind(']') + 1
-    json_str = content[start:end] if start != -1 and end != -1 else content.strip()
-    import json
+    # Verwijder nummering en pak array\ n    cleaned = content
+    # extract between [ ]
+    start = cleaned.find('[')
+    end = cleaned.rfind(']') + 1
+    json_str = cleaned[start:end] if start != -1 and end != -1 else cleaned
+    import json, re
+    # remove numeric prefixes
+    json_str = re.sub(r"\d+\s*:\s*{", "{", json_str)
     replacements = json.loads(json_str)
-    return replacements
+    # filter zinvolle vervangingen
+    return [r for r in replacements if r.get('find') and r.get('find') != r.get('replace')]
+
+
+def apply_replacements(doc_path: str, replacements: list[dict]) -> bytes:
+    """
+    Past find/replace-operaties toe in een .docx, behoudt alle stijlen.
+    """
+    doc = docx.Document(doc_path)
+
+    def replace_in_runs(runs):
+        if not runs:
+            return
+        text = ''.join(r.text for r in runs)
+        for rep in replacements:
+            text = text.replace(rep['find'], rep['replace'])
+        runs[0].text = text
+        for r in runs[1:]:
+            r.text = ''
+
+    # paragrafen
+    for para in doc.paragraphs:
+        replace_in_runs(para.runs)
+    # tabellen
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    replace_in_runs(para.runs)
+
+    # export als bytes
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 # ─── Streamlit UI ────────────────────────────────────────────────────────
 st.sidebar.header("Upload bestanden")
@@ -119,7 +121,7 @@ if tpl_file and ctx_file:
     st.text(context_text[:200] + ("…" if len(context_text)>200 else ""))
 
     if st.button("🔄 Vul en vervang automatisch"):
-        st.info("Bezig met genereren van vervangingsinstructies…")
+        st.info("Genereren vervangingsinstructies…")
         try:
             replacements = get_replacements(tpl_text, context_text)
             st.write("Vervangingslijst:", replacements)
@@ -133,4 +135,4 @@ if tpl_file and ctx_file:
         except Exception as e:
             st.error(f"Fout bij invullen: {e}")
 else:
-    st.info("Upload zowel je template als context-bestand in de zijbalk.")
+    st.info("Upload template en context in de zijbalk om te starten.")
