@@ -63,8 +63,8 @@ tpl_file = st.sidebar.file_uploader("Upload DOCX Template", type=["docx"])
 src_files = st.sidebar.file_uploader("Upload Brondocumenten", type=["docx"], accept_multiple_files=True)
 
 if tpl_file and src_files:
-    # Tijdelijke map
-tmp_dir = tempfile.mkdtemp()
+    # Maak tijdelijke map
+    tmp_dir = tempfile.mkdtemp()
     # Sla template op
     tpl_path = os.path.join(tmp_dir, "template.docx")
     with open(tpl_path, "wb") as f:
@@ -88,7 +88,8 @@ tmp_dir = tempfile.mkdtemp()
         st.markdown(f"**Brondocument:** {src_files[0].name}")
         st.write(read_docx(src_paths[0]))
 
-    # Knop onder de weergave\ n    if st.button("Vul template aan met nieuwe/vervangende informatie"):
+    # Knop onder de weergave
+    if st.button("Vul template aan met nieuwe/vervangende informatie"):
         out_path = os.path.join(tmp_dir, "resultaat.docx")
         create_docx(tpl_path, src_paths, out_path)
         with open(out_path, "rb") as f:
