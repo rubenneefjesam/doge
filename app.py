@@ -65,23 +65,34 @@ def get_replacements(template_text: str, context_text: str) -> list[dict]:
     Vraag LLM om een lijst van find/replace-instructies als JSON.
     """
     prompt = (
-        "Gegeven de onderstaande template-tekst en nieuwe context, lever een JSON-array met"
-        " objecten waarin elke 'find' de originele zinsnede is en 'replace' de vervangende zinsnede."
-        f"\n\nTEMPLATE:\n{template_text}\n\nCONTEXT:\n{context_text}"
-    )
+        "Gegeven de onderstaande template-tekst en nieuwe context, lever **strikt** een JSON-array van objecten zonder indexnummers. Elk object heeft twee velden: 'find' en 'replace'. Voorbeeld:
+[
+  {"find": "oude tekst", "replace": "nieuwe tekst"},
+  ...
+]
+
+TEMPLATE:
+{template_text}
+
+CONTEXT:
+{context_text}
+"],
     resp = groq_client.chat.completions.create(
         model="llama-3.1-8b-instant",
         temperature=0.2,
-        messages=[{"role":"system","content":"Geef alleen de JSON-array, zonder uitleg."},
-                  {"role":"user","content":prompt}]
+        messages=[
+            {"role":"system","content":"Antwoord alleen de JSON-array, zonder uitleg, markdown of opsomming."},
+            {"role":"user","content": prompt}
+        ]
     )
     content = resp.choices[0].message.content
-    # extract JSON
+    # JSON-extractie tussen eerste '[' en laatste ']'
     start = content.find('[')
     end = content.rfind(']') + 1
-    json_str = content[start:end] if start != -1 and end != -1 else content
+    json_str = content[start:end] if start != -1 and end != -1 else content.strip()
     import json
-    return json.loads(json_str)
+    replacements = json.loads(json_str)
+
 
 # ─── Streamlit UI ────────────────────────────────────────────────────────
 st.sidebar.header("Upload bestanden")
